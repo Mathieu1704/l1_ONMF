@@ -1,4 +1,3 @@
-import numpy as np
 
 def init_W_random(X: np.ndarray, r: int, seed: int | None = None, nonneg: bool = True):
     """

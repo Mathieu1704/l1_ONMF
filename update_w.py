@@ -1,5 +1,9 @@
 import numpy as np
-from .medians import weighted_median
+try:
+    from .medians import weighted_median
+except ImportError:
+    from medians import weighted_median
+
 
 def update_W_l1(X: np.ndarray,
                 H: np.ndarray,

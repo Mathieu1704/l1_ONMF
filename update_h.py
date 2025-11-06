@@ -1,5 +1,9 @@
 import numpy as np
-from .medians import weighted_median
+try:
+    from .medians import weighted_median
+except ImportError:
+    from medians import weighted_median
+
 
 def _l1_scale_for_pair(x: np.ndarray, w: np.ndarray, nonneg_s: bool = True, eps: float = 1e-12) -> float:
     """

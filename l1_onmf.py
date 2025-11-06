@@ -1,12 +1,23 @@
 from dataclasses import dataclass
 import numpy as np
 
-from .init import init_W_random, warm_start_from_fro_onmf
-from .update_h import update_H_l1
-from .update_w import update_W_l1
-from .normalize import normalize_rows_H_and_rescale_W
-from .metrics import rel_l1_error
-from .utils import ensure_nonempty_clusters
+# Imports robustes : d'abord relatifs (package), sinon plats (modules locaux)
+try:
+    from .init import init_W_random, warm_start_from_fro_onmf
+    from .update_h import update_H_l1
+    from .update_w import update_W_l1
+    from .normalize import normalize_rows_H_and_rescale_W
+    from .metrics import rel_l1_error
+    from .utils import ensure_nonempty_clusters
+except ImportError:
+    from init import init_W_random, warm_start_from_fro_onmf
+    from update_h import update_H_l1
+    from update_w import update_W_l1
+    from normalize import normalize_rows_H_and_rescale_W
+    from metrics import rel_l1_error
+    from utils import ensure_nonempty_clusters
+
+
 
 @dataclass
 class L1ONMFOptions:
@@ -19,6 +30,12 @@ class L1ONMFOptions:
     log_errors: bool = True
     verbose: bool = True
     eps: float = 1e-12
+
+def rel_l1_error(X: np.ndarray, W: np.ndarray, H: np.ndarray) -> float:
+    num = np.sum(np.abs(X - W @ H))
+    den = np.sum(np.abs(X)) + 1e-16
+    return float(num / den)
+
 
 
 def alternating_l1_onmf(X: np.ndarray, opts: L1ONMFOptions):

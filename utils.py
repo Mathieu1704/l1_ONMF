@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def split_largest_cluster(H: np.ndarray):
     """
     Utility: find largest cluster (row of H with most nonzeros), return its indices.

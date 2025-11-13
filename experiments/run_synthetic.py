@@ -1,6 +1,6 @@
 # examples/run_synthetic.py
 import numpy as np
-from l1_onmf import l1_onmf
+from l1_onmf import alternating_l1_onmf
 from metrics import clustering_accuracy_hungarian
 
 rng = np.random.default_rng(0)
@@ -18,7 +18,7 @@ for j in range(n):
 
 X = W_true @ H_true + 0.05 * rng.normal(size=(m, n))  # petit bruit
 
-W, H, info = l1_onmf(X, r, maxiter=100, tol=1e-6, init_seed=0, verbose=True)
+W, H, info = alternating_l1_onmf(X, r, maxiter=100, tol=1e-6, init_seed=0, verbose=True)
 
 y_pred = H.argmax(axis=0) + 1
 acc = clustering_accuracy_hungarian(y_true, y_pred)

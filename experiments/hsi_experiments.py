@@ -17,10 +17,12 @@ import time
 from pathlib import Path
 import sys
 
-# -- rendre importables les modules locaux --
-_ROOT = Path(__file__).resolve().parents[1]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data" / "hsi"
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 
 from datasets import load_hsi_mat
 from l1_onmf import alternating_l1_onmf, L1ONMFOptions
@@ -30,7 +32,8 @@ def pick_path():
     if MAT_PATH:
         return MAT_PATH
     name = {"Moffet":"Moffet.mat", "Samson":"Samson.mat", "Jasper":"Jasper.mat"}[EXP]
-    return str(Path(DATA_DIR) / name)
+    return str(DATA_DIR / name)
+
 
 def main():
     mat_path = pick_path()
@@ -38,10 +41,20 @@ def main():
     X, r, Wtrue, dimx, dimy = load_hsi_mat(mat_path)
     print(f"X={X.shape}, r={r}")
 
+    # Construire les options pour l'algo
+    opts = L1ONMFOptions(
+        r=r,
+        maxiter=MAXITER,
+        delta=TOL,
+        seed=SEED,
+        verbose=False,
+        log_errors=False,  # passe à True si tu veux voir la convergence
+    )
+
     t0 = time.perf_counter()
-    W, H, info = l1_onmf(X, r, maxiter=MAXITER, tol=TOL, init_seed=SEED, verbose=False)
+    W, H, info = alternating_l1_onmf(X, opts)
     t1 = time.perf_counter()
-    print(f"iters={info.get('n_iter', None)}, time={t1 - t0:.2f}s")
+    print(f"iters={info.get('num_iter', None)}, time={t1 - t0:.2f}s")
 
     if Wtrue is not None:
         W_aligned, _ = reorder_by_hungarian(Wtrue, W)

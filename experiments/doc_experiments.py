@@ -5,18 +5,18 @@
 #     python experiments/doc_experiments.py
 
 # ===== PARAMÈTRES =====
-OUT_CSV  = "results_docs.csv"      # fichier CSV de sortie
+OUT_CSV  = "results_docs_warm_fro.csv"      # fichier CSV de sortie
 MAXITER  = 100
 TOL      = 1e-6
 SEED     = 0
-DATASETS = [
-    "NG20.mat","ng3sim.mat","classic.mat","ohscal.mat","k1b.mat","hitech.mat",
-    "reviews.mat","sports.mat","la1.mat","la12.mat","la2.mat","tr11.mat",
-    "tr23.mat","tr41.mat","tr45.mat"
-]
+# DATASETS = [
+#     "NG20.mat","ng3sim.mat","classic.mat","ohscal.mat","k1b.mat","hitech.mat",
+#     "reviews.mat","sports.mat","la1.mat","la12.mat","la2.mat","tr11.mat",
+#     "tr23.mat","tr41.mat","tr45.mat"
+# ]
 # Pour un test rapide, commente la liste complète ci-dessus et décommente:
 # DATASETS = ["classic.mat", "la1.mat"]
-# DATASETS = ["classic.mat"]
+DATASETS = ["classic.mat"]
 
 # ======================
 

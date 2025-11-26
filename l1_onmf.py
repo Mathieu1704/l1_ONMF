@@ -28,7 +28,7 @@ class L1ONMFOptions:
     maxiter: int = 100
     delta: float = 1e-6           # stopping on ||H - H_prev||_F
     enforce_W_nonneg: bool = True
-    init: str = "auto"            # "auto" | "random" | "warm_fro"
+    init: str = "warm_fro"            # "auto" | "random" | "warm_fro"
     seed: int | None = None
     log_errors: bool = True
     verbose: bool = True

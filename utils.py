@@ -10,15 +10,33 @@ def split_largest_cluster(H: np.ndarray):
     Kj = np.where(H[k, :] > 0)[0]
     return k, Kj
 
-def ensure_nonempty_clusters(H: np.ndarray, X: np.ndarray):
+def ensure_nonempty_clusters(H: np.ndarray):
     """
-    If a row i of H is all zeros, reassign a few worst-reconstructed points to that cluster.
-    (Simple heuristic; can be replaced by a proper split or reinit.)
+    Répare H en gardant la contrainte hard-clustering:
+    - 1 seul non-zéro par colonne
+    - pas de cluster vide
     """
+    H = np.asarray(H, dtype=float).copy()
     k, n = H.shape
-    empties = np.where(np.sum(H > 0, axis=1) == 0)[0]
+
+    # assignment courant (hard)
+    assign = np.argmax(H, axis=0)
+    sizes = np.bincount(assign, minlength=k)
+    empties = np.where(sizes == 0)[0]
+
     for i in empties:
-        # pick a random column to start the cluster
-        j = np.random.randint(0, n)
-        H[i, j] = np.linalg.norm(X[:, j])  # a rough positive scale
+        donor = int(np.argmax(sizes))
+        donor_cols = np.where(assign == donor)[0]
+
+        # on prend la colonne la "moins forte" du donor (scale la plus petite)
+        j = donor_cols[np.argmin(H[donor, donor_cols])]
+
+        # MOVE colonne j vers le cluster vide i
+        H[:, j] = 0.0
+        H[i, j] = 1.0  # valeur arbitraire > 0 ; la normalisation derrière fixera l’échelle
+
+        assign[j] = i
+        sizes[i] += 1
+        sizes[donor] -= 1
+
     return H

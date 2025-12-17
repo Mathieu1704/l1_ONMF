@@ -79,11 +79,14 @@ def run_on_matrix(X, y_true, r, label: str):
 
     # Pour classic.mat, W et H sont énormes : on évite d'imprimer tout.
     if USE_TOY:
-        np.set_printoptions(precision=3, suppress=True)
         print("\nW (estimé) =")
-        print(W)
+        with np.printoptions(precision=3, suppress=True, linewidth=200):
+            print(np.asarray(W))
+
         print("\nH (estimé) =")
-        print(H)
+        with np.printoptions(precision=3, suppress=True, linewidth=200):
+            print(np.asarray(H))
+
     else:
         print(f"\nW shape = {W.shape}, H shape = {H.shape} (matrices non affichées car trop grandes)")
 
@@ -108,7 +111,8 @@ def main():
         X, y_true, r, W_true, H_true = make_toy_matrix(m=DIM, n=DIM, r=3, noise=0.05, seed=0)
         print(f">>> Test sur matrice synthétique {DIM}x{DIM}")
         print("W_true et H_true connus (pas nécessaire pour l'algo, mais pour le debug).")
-        run_on_matrix(X, y_true, r, label={f"{DIM}x{DIM}"})
+        run_on_matrix(X, y_true, r, label=f"{DIM}x{DIM}")
+
     else:
         # ====== CAS classic.mat ======
         data_dir = ROOT / "data" / "docs"

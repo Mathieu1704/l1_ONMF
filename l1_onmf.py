@@ -76,32 +76,46 @@ def alternating_l1_onmf(X: np.ndarray, opts: L1ONMFOptions):
     if opts.verbose:
         print("Starting L1-ONMF: m={}, n={}, r={}, maxiter={}".format(m, n, r, opts.maxiter))
 
-    for it in range(1, opts.maxiter + 1):
-        # --- Update H (assignments + scales) ---
-        H_prev = H
-        H = update_H_l1(X, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-
-        # Safety: avoid empty clusters (rare)
-        H = ensure_nonempty_clusters(H, X)
-
-        # --- Normalize rows of H and co-scale W (preserves WH) ---
-        H, W = normalize_rows_H_and_rescale_W(H, W)
-
-        # --- Update W (coordinate-wise weighted medians) ---
-        W = update_W_l1(X, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-
-        # --- Error / stopping ---
-        if opts.log_errors:
-            err = rel_l1_error(X, W, H)
-            errs.append(err)
+        for it in range(1, opts.maxiter + 1):
+            # --- Erreur au début de l'itération ---
+            err_before = rel_l1_error(X, W, H)
             if opts.verbose:
-                print(f"Iter {it:03d} | rel L1 err = {err:.6f}")
+                print(f"\nIter {it:03d} | avant updates : rel L1 err = {err_before:.6f}")
 
-        # stopping on H change
-        diff = np.linalg.norm(H - H_prev, ord="fro")
-        if diff < opts.delta and it >= 3:
+            # --- Update H (assignments + scales) ---
+            H_prev = H.copy()
+            H = update_H_l1(X, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
+            err_after_H = rel_l1_error(X, W, H)
             if opts.verbose:
-                print(f"Converged at iter {it} (||H-H_prev||_F={diff:.3e}).")
-            break
+                print(f"Iter {it:03d} | après update_H : rel L1 err = {err_after_H:.6f}")
+
+            # Safety: avoid empty clusters (rare)
+            H = ensure_nonempty_clusters(H, X)
+
+            # --- Normalize rows of H and co-scale W (preserves WH) ---
+            H, W = normalize_rows_H_and_rescale_W(H, W)
+            err_after_norm = rel_l1_error(X, W, H)
+            if opts.verbose:
+                print(f"Iter {it:03d} | après normalize(H,W) : rel L1 err = {err_after_norm:.6f}")
+
+            # --- Update W (coordinate-wise weighted medians) ---
+            W = update_W_l1(X, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
+            err_after_W = rel_l1_error(X, W, H)
+            if opts.verbose:
+                print(f"Iter {it:03d} | après update_W : rel L1 err = {err_after_W:.6f}")
+
+            # --- Error / logging global ---
+            if opts.log_errors:
+                errs.append(err_after_W)
+                if opts.verbose:
+                    print(f"Iter {it:03d} | rel L1 err (log) = {err_after_W:.6f}")
+
+            # --- stopping sur H (comme avant) ---
+            diff = np.linalg.norm(H - H_prev, ord="fro")
+            if diff < opts.delta and it >= 3:
+                if opts.verbose:
+                    print(f"Converged at iter {it} (||H-H_prev||_F={diff:.3e}).")
+                break
+
 
     return W, H, {"rel_l1_errors": np.array(errs), "num_iter": it}

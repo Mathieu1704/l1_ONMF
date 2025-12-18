@@ -1,103 +1,131 @@
 # experiments/doc_experiments.py
-# ==============================
-# L1-ONMF sur les 15 jeux de documents .mat sans argparse (tout est ici).
-# Modifie le bloc PARAMÈTRES ci-dessous et lance simplement:
-#     python experiments/doc_experiments.py
-
-# ===== PARAMÈTRES =====
-OUT_CSV  = "results_docs_warm_fro.csv"      # fichier CSV de sortie
-MAXITER  = 100
-TOL      = 1e-6
-SEED     = 0
-DATASETS = [
-    "NG20.mat","ng3sim.mat","classic.mat","ohscal.mat","k1b.mat","hitech.mat",
-    "reviews.mat","sports.mat","la1.mat","la12.mat","la2.mat","tr11.mat",
-    "tr23.mat","tr41.mat","tr45.mat"
-]
-# # Pour un test rapide, commente la liste complète ci-dessus et décommente:
-# # DATASETS = ["classic.mat", "la1.mat"]
-# DATASETS = ["classic.mat"]
-
-# ======================
-
 import time, csv
 from pathlib import Path
 import sys
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy import sparse
+from sklearn.feature_extraction.text import TfidfTransformer
 from sklearn.preprocessing import normalize
 
-# --- IMPORTANT: mettre le parent de l1_ONMF dans sys.path ---
-PKG_PARENT = Path(__file__).resolve().parents[2]  # ...\Research Project
+# --- SETUP PATH ---
+PKG_PARENT = Path(__file__).resolve().parents[2]
 if str(PKG_PARENT) not in sys.path:
     sys.path.insert(0, str(PKG_PARENT))
 
-# Chemins de data (basé sur le package)
-ROOT = Path(__file__).resolve().parents[1]        # ...\Research Project\l1_ONMF
+ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data" / "docs"
 
-# Imports via le package (PAS en relatif local)
 from l1_ONMF.datasets import load_doc_mat
 from l1_ONMF import alternating_l1_onmf, L1ONMFOptions
 from l1_ONMF.metrics import clustering_accuracy_hungarian, ari, nmi
 
-def run_one(path):
-    X, y, r = load_doc_mat(path)
+# ===== PARAMETRES =====
+OUT_CSV = "results_optimized.csv"
+MAXITER = 100 # On laisse le temps de converger avec l'inertie
+TOL = 1e-6
+SEED = 42
+N_INIT = 5    # On assure le coup avec 5 inits
 
-    # aide la médiane pondérée à converger vers des profils sémantiques
+DATASETS = [
+    "classic.mat", "sports.mat", "reviews.mat", "hitech.mat", "ohscal.mat", 
+    "la1.mat", "k1b.mat", "la12.mat", "la2.mat", "tr11.mat", 
+    "tr23.mat", "tr41.mat", "tr45.mat", "NG20.mat", "ng3sim.mat"
+]
+
+def save_convergence_plot(dataset_name, errors, seed):
+    if errors is None or len(errors) == 0: return
+    plt.figure(figsize=(8, 5))
+    plt.plot(errors, marker='o', markersize=3, label='Rel L1 Error')
+    plt.title(f"Convergence: {dataset_name} (seed={seed})")
+    plt.xlabel("Iterations")
+    plt.ylabel("Rel L1 Error")
+    plt.grid(True)
+    plt.legend()
+    out_dir = Path(__file__).parent / "plots"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_dir / f"{dataset_name}_conv.png")
+    plt.close()
+
+def run_one(path):
+    dataset_name = Path(path).name
+    print(f"\n=== Processing {dataset_name} ===")
+    
+    try:
+        X_raw, y, r = load_doc_mat(path)
+    except Exception as e:
+        print(f"[ERROR] Loading failed (corrupt file?): {e}")
+        return None
+
+    # 1. TF-IDF
+    X_t = X_raw.T
+    tfidf = TfidfTransformer(norm='l1', use_idf=True, smooth_idf=True)
+    X_t = tfidf.fit_transform(X_t)
+    
+    # 2. SELECTION PLUS LARGE (Répond à ta question sur m=1000)
+    # On monte à 5000 pour avoir plus de "corps", tout en éliminant le bruit extrême
+    K_FEATURES = 5000
+    if X_t.shape[1] > K_FEATURES:
+        word_scores = np.asarray(X_t.sum(axis=0)).ravel()
+        top_indices = np.argsort(word_scores)[-K_FEATURES:]
+        X_t = X_t[:, top_indices]
+        print(f"  Feature Selection: Top-{K_FEATURES} (was {X_raw.shape[0]})")
+    else:
+        print(f"  Kept all {X_t.shape[1]} features.")
+    
+    X = X_t.T # (m, n)
+
+    # 3. NORMALISATION CRITIQUE
+    # Indispensable pour que K-Means (l'init) et L1 (l'algo) voient la même géométrie
     X = normalize(X, norm='l1', axis=0)
 
     opts = L1ONMFOptions(
         r=r,
         maxiter=MAXITER,
-        l1_tol=TOL,
-        patience=10,
+        l1_tol=TOL, 
+        patience=20, # Patience élevée car l'inertie ralentit la convergence mais la rend stable
         seed=SEED,
         verbose=True,
         log_errors=True,
-        enforce_W_nonneg=True,   # pour docs c’est cohérent
-        init="snpa",
-        n_init=3,                # petit multi-start
-        init_prune_top=500        # OPTION INIT seulement (mets None si tu veux)
+        enforce_W_nonneg=True,
+        init="kmeans",  
+        n_init=N_INIT,
     )
-
-
-
-
 
     t0 = time.perf_counter()
     W, H, info = alternating_l1_onmf(X, opts)   
     t1 = time.perf_counter()
 
     c_pred = np.asarray(H).argmax(axis=0) + 1
+    acc = clustering_accuracy_hungarian(y, c_pred)
+    
+    print(f"  => ACC: {acc*100:.2f}% | Time: {t1-t0:.2f}s")
+    save_convergence_plot(dataset_name, info.get("rel_l1_errors"), info.get("seed"))
+
     return {
-        "dataset": Path(path).name,
+        "dataset": dataset_name,
         "m": X.shape[0],
         "n": X.shape[1],
         "r": r,
-        "acc": clustering_accuracy_hungarian(y, c_pred),
+        "acc": acc,
         "ari": ari(y, c_pred),
         "nmi": nmi(y, c_pred),
         "time_s": t1 - t0,
         "iters": info.get("num_iter", None),    
     }
 
-
 def main():
-    data_dir = DATA_DIR
     rows = []
     for name in DATASETS:
-        p = data_dir / name
-        print(f"==> {name}")
-        metrics = run_one(str(p))
-        rows.append(metrics)
+        metrics = run_one(str(DATA_DIR / name))
+        if metrics: rows.append(metrics)
 
-    with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["dataset","m","n","r","acc","ari","nmi","time_s","iters"])
-        w.writeheader()
-        for r in rows:
-            w.writerow(r)
-    print(f"Résultats écrits dans {OUT_CSV}")
+    if rows:
+        with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=["dataset","m","n","r","acc","ari","nmi","time_s","iters"])
+            w.writeheader()
+            for r in rows: w.writerow(r)
+        print(f"\nResults written to {OUT_CSV}")
 
 if __name__ == "__main__":
     main()

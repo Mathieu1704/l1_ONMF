@@ -1,28 +1,39 @@
+# medians.py
 import numpy as np
+from numba import njit
 
-def weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
-    """
-    Weighted median on 1D arrays (values, weights >= 0), O(t log t) by sorting.
-    If total weight is zero, returns 0.0.
-    """
-    if values.size == 0:
-        return 0.0
-    w = np.asarray(weights, dtype=float)
-    v = np.asarray(values, dtype=float)
-    mask = w > 0
-    if not np.any(mask):
-        return 0.0
-    v = v[mask]
-    w = w[mask]
-    order = np.argsort(v, kind="mergesort")
-    v = v[order]
-    w = w[order]
-    csum = np.cumsum(w)
-    half = 0.5 * csum[-1]
-    idx = np.searchsorted(csum, half, side="right")
-    idx = min(idx, v.size - 1)
-    return float(v[idx])
+import numpy as np
+from numba import njit
 
+@njit(cache=True)
+def weighted_median_numba(values, weights):
+    """
+    Calcule la médiane pondérée.
+    Equivalent L1 de la moyenne pondérée utilisée en KL.
+    """
+    n = len(values)
+    if n == 0: return 0.0
+    
+    # Tri conjoint
+    idxs = np.argsort(values)
+    v_sorted = values[idxs]
+    w_sorted = weights[idxs]
+    
+    total_w = np.sum(w_sorted)
+    if total_w <= 0: return 0.0
+    
+    half_w = 0.5 * total_w
+    cum_w = 0.0
+    
+    for i in range(n):
+        cum_w += w_sorted[i]
+        if cum_w >= half_w:
+            return v_sorted[i]
+    return v_sorted[-1]
+
+# Wrapper pour compatibilité si besoin, mais on appellera directement la version numba
+def weighted_median(values, weights):
+    return weighted_median_numba(np.asarray(values, dtype=float), np.asarray(weights, dtype=float))
 
 def median(values: np.ndarray) -> float:
     """Unweighted median (fallback), returns 0.0 on empty."""

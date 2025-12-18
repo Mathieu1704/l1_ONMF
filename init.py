@@ -1,5 +1,6 @@
 # l1_ONMF/init.py
 import numpy as np
+from sklearn.cluster import KMeans
 try:
     import scipy.sparse as sp
 except ImportError:
@@ -19,6 +20,32 @@ def init_W_snpa(X, r: int, seed: int | None = None):
     norms[norms == 0] = 1.0
     W0 = W0 / norms[None, :]
     return W0, K, info
+
+def init_W_kmeans(X, r: int, seed: int | None = None):
+    """
+    Initialisation via K-Means (sklearn).
+    X est (m x n). KMeans attend (n_samples, n_features).
+    On passe donc X.T a KMeans.
+    Retourne W0 (m x r).
+    """
+    # Si X est sparse CSC, X.T sera CSR, ce qui est optimal pour sklearn KMeans
+    # Si X est dense, X.T est dense, ok aussi.
+    
+    # Init KMeans (n_init=1 suffit souvent pour une init, mais n_init='auto' est plus sur)
+    km = KMeans(n_clusters=r, init='k-means++', n_init=1, random_state=seed)
+    
+    # Fit sur la transposée (documents = samples)
+    km.fit(X.T)
+    
+    # Les centres sont (r, m), on transpose pour avoir W (m, r)
+    W0 = km.cluster_centers_.T.astype(float)
+    
+    # Normalisation des colonnes (crucial pour la comparaison avec L1-ONMF)
+    norms = np.linalg.norm(W0, axis=0)
+    norms[norms == 0] = 1.0
+    W0 /= norms[None, :]
+    
+    return W0
 
 
 def init_W_random(X, r: int, seed: int | None = None, nonneg: bool = True):

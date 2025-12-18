@@ -45,10 +45,11 @@ def main():
     opts = L1ONMFOptions(
         r=r,
         maxiter=MAXITER,
-        delta=TOL,
+        l1_tol=TOL,
+        patience=3,
         seed=SEED,
         verbose=False,
-        log_errors=False,  # passe à True si tu veux voir la convergence
+        log_errors=False,
     )
 
     t0 = time.perf_counter()

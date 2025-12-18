@@ -9,14 +9,14 @@ OUT_CSV  = "results_docs_warm_fro.csv"      # fichier CSV de sortie
 MAXITER  = 100
 TOL      = 1e-6
 SEED     = 0
-# DATASETS = [
-#     "NG20.mat","ng3sim.mat","classic.mat","ohscal.mat","k1b.mat","hitech.mat",
-#     "reviews.mat","sports.mat","la1.mat","la12.mat","la2.mat","tr11.mat",
-#     "tr23.mat","tr41.mat","tr45.mat"
-# ]
-# Pour un test rapide, commente la liste complète ci-dessus et décommente:
-# DATASETS = ["classic.mat", "la1.mat"]
-DATASETS = ["classic.mat"]
+DATASETS = [
+    "NG20.mat","ng3sim.mat","classic.mat","ohscal.mat","k1b.mat","hitech.mat",
+    "reviews.mat","sports.mat","la1.mat","la12.mat","la2.mat","tr11.mat",
+    "tr23.mat","tr41.mat","tr45.mat"
+]
+# # Pour un test rapide, commente la liste complète ci-dessus et décommente:
+# # DATASETS = ["classic.mat", "la1.mat"]
+# DATASETS = ["classic.mat"]
 
 # ======================
 
@@ -24,34 +24,46 @@ import time, csv
 from pathlib import Path
 import sys
 import numpy as np
-from scipy import sparse  # si besoin plus tard
+from scipy import sparse
+from sklearn.preprocessing import normalize
 
-# Répertoire racine du projet (le dossier qui contient l1_onmf.py, datasets.py, data/, experiments/)
-ROOT = Path(__file__).resolve().parents[1]
+# --- IMPORTANT: mettre le parent de l1_ONMF dans sys.path ---
+PKG_PARENT = Path(__file__).resolve().parents[2]  # ...\Research Project
+if str(PKG_PARENT) not in sys.path:
+    sys.path.insert(0, str(PKG_PARENT))
 
-# DATA_DIR basé sur l'emplacement du script, pas sur le cwd
+# Chemins de data (basé sur le package)
+ROOT = Path(__file__).resolve().parents[1]        # ...\Research Project\l1_ONMF
 DATA_DIR = ROOT / "data" / "docs"
 
-# -- rendre importables les modules locaux (datasets, l1_onmf, metrics, ...) --
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from datasets import load_doc_mat
-from l1_onmf import alternating_l1_onmf, L1ONMFOptions
-from metrics import clustering_accuracy_hungarian, ari, nmi
-
+# Imports via le package (PAS en relatif local)
+from l1_ONMF.datasets import load_doc_mat
+from l1_ONMF import alternating_l1_onmf, L1ONMFOptions
+from l1_ONMF.metrics import clustering_accuracy_hungarian, ari, nmi
 
 def run_one(path):
     X, y, r = load_doc_mat(path)
 
+    # aide la médiane pondérée à converger vers des profils sémantiques
+    X = normalize(X, norm='l1', axis=0)
+
     opts = L1ONMFOptions(
         r=r,
         maxiter=MAXITER,
-        delta=TOL,
+        l1_tol=TOL,
+        patience=10,
         seed=SEED,
-        verbose=False,
-        log_errors=False,   # mets True si tu veux tracer la convergence
+        verbose=True,
+        log_errors=True,
+        enforce_W_nonneg=True,   # pour docs c’est cohérent
+        init="snpa",
+        n_init=3,                # petit multi-start
+        init_prune_top=500        # OPTION INIT seulement (mets None si tu veux)
     )
+
+
+
+
 
     t0 = time.perf_counter()
     W, H, info = alternating_l1_onmf(X, opts)   

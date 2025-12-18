@@ -5,12 +5,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ---------- PARAMÈTRES ----------
-USE_TOY = False         # True pour tester la 10x10, False pour classic.mat
+USE_TOY = False        # True pour tester la 10x10, False pour classic.mat
 DATASET_NAME = "classic.mat"
 MAXITER = 50
 TOL = 1e-6
 SEED = 0
-DIM = 20
+DIM = 2000
 # -------------------------------
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,9 +55,10 @@ def run_on_matrix(X, y_true, r, label: str):
     opts = L1ONMFOptions(
         r=r,
         maxiter=MAXITER,
-        delta=TOL,
+        l1_tol=TOL,
+        patience=3,
         seed=SEED,
-        verbose=True,      # logs détaillés par itération
+        verbose=True,      
         log_errors=True,   # stocke les erreurs relatives L1
         init="warm_fro",
     )
@@ -77,7 +78,7 @@ def run_on_matrix(X, y_true, r, label: str):
         print(f"ARI  = {ari(y_true, y_pred):.4f}")
         print(f"NMI  = {nmi(y_true, y_pred):.4f}")
 
-    # Pour classic.mat, W et H sont énormes : on évite d'imprimer tout.
+    
     if USE_TOY:
         print("\nW (estimé) =")
         with np.printoptions(precision=3, suppress=True, linewidth=200):
@@ -90,6 +91,20 @@ def run_on_matrix(X, y_true, r, label: str):
     else:
         print(f"\nW shape = {W.shape}, H shape = {H.shape} (matrices non affichées car trop grandes)")
 
+    # # Tracer la courbe d'erreur relative L1
+    # errs = info.get("rel_l1_errors", None)
+    # if errs is not None and len(errs) > 0:
+    #     iters = np.arange(1, len(errs) + 1)
+    #     plt.figure()
+    #     plt.plot(iters, errs, marker="o")
+    #     plt.xlabel("Itération")
+    #     plt.ylabel("Erreur relative L1")
+    #     plt.title(f"Convergence L1-ONMF ({label})")
+    #     plt.grid(True)
+    #     plt.show()
+    # else:
+    #     print("Pas d'erreurs enregistrées dans info['rel_l1_errors'].")
+
     # Tracer la courbe d'erreur relative L1
     errs = info.get("rel_l1_errors", None)
     if errs is not None and len(errs) > 0:
@@ -100,9 +115,14 @@ def run_on_matrix(X, y_true, r, label: str):
         plt.ylabel("Erreur relative L1")
         plt.title(f"Convergence L1-ONMF ({label})")
         plt.grid(True)
-        plt.show()
+
+        out = ROOT / "experiments" / "convergence.png"
+        plt.savefig(out, dpi=200, bbox_inches="tight")
+        plt.close()
+        print(f"Plot sauvegardé : {out}")
     else:
         print("Pas d'erreurs enregistrées dans info['rel_l1_errors'].")
+
 
 
 def main():

@@ -1,6 +1,6 @@
+﻿
 
-
-===== FILE: C:\ICare\research\l1_ONMF\__init__.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\__init__.py =====
 
 __all__ = [
     "alternating_l1_onmf",
@@ -13,7 +13,7 @@ from .l1_onmf import alternating_l1_onmf, L1ONMFOptions
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\datasets.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\datasets.py =====
 
 # datasets.py
 from __future__ import annotations
@@ -24,13 +24,13 @@ from scipy import sparse
 def load_doc_mat(path: str):
     """
     Charge un dataset document .mat (style repo KL-ONMF).
-    Attend des clés: 'dtm' (doc-term), 'classid' (labels).
-    Le script MATLAB fait dtm = dtm'; on reproduit donc la transposée.
+    Attend des clÃ©s: 'dtm' (doc-term), 'classid' (labels).
+    Le script MATLAB fait dtm = dtm'; on reproduit donc la transposÃ©e.
     Retourne X (sparse CSR si possible), y (np.ndarray), r (int).
     """
     mat = loadmat(path, squeeze_me=True)
     if 'dtm' not in mat or 'classid' not in mat:
-        raise ValueError(f"{path}: clés 'dtm' et 'classid' nécessaires.")
+        raise ValueError(f"{path}: clÃ©s 'dtm' et 'classid' nÃ©cessaires.")
     dtm = mat['dtm']
     # Transpose comme dans experiment_document.m (dtm = dtm')
     if sparse.issparse(dtm):
@@ -44,8 +44,8 @@ def load_doc_mat(path: str):
 def load_hsi_mat(path: str):
     """
     Charge un dataset HSI .mat (style Moffet/Samson/Jasper).
-    Retourne X (m x n dense), r (int si présent, sinon None),
-    Wtrue (m x r si présent, sinon None), dimx/dimy si présents.
+    Retourne X (m x n dense), r (int si prÃ©sent, sinon None),
+    Wtrue (m x r si prÃ©sent, sinon None), dimx/dimy si prÃ©sents.
     """
     mat = loadmat(path, squeeze_me=True)
     keys = mat.keys()
@@ -55,14 +55,14 @@ def load_hsi_mat(path: str):
     dimx = int(mat['dimx']) if 'dimx' in keys else None
     dimy = int(mat['dimy']) if 'dimy' in keys else None
     if X is None:
-        raise ValueError(f"{path}: clé 'X' absente.")
+        raise ValueError(f"{path}: clÃ© 'X' absente.")
     return X, r, Wtrue, dimx, dimy
 
 
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\examples\demo_synthetic.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\examples\demo_synthetic.py =====
 
 import numpy as np
 from l1_onmf import alternating_l1_onmf, L1ONMFOptions
@@ -91,15 +91,15 @@ if __name__ == "__main__":
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\experiments\doc_experiments.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\doc_experiments.py =====
 
 # experiments/doc_experiments.py
 # ==============================
 # L1-ONMF sur les 15 jeux de documents .mat sans argparse (tout est ici).
-# Modifie le bloc PARAMÈTRES ci-dessous et lance simplement:
+# Modifie le bloc PARAMÃˆTRES ci-dessous et lance simplement:
 #     python experiments/doc_experiments.py
 
-# ===== PARAMÈTRES =====
+# ===== PARAMÃˆTRES =====
 OUT_CSV  = "results_docs_warm_fro.csv"      # fichier CSV de sortie
 MAXITER  = 100
 TOL      = 1e-6
@@ -109,7 +109,7 @@ SEED     = 0
 #     "reviews.mat","sports.mat","la1.mat","la12.mat","la2.mat","tr11.mat",
 #     "tr23.mat","tr41.mat","tr45.mat"
 # ]
-# Pour un test rapide, commente la liste complète ci-dessus et décommente:
+# Pour un test rapide, commente la liste complÃ¨te ci-dessus et dÃ©commente:
 # DATASETS = ["classic.mat", "la1.mat"]
 DATASETS = ["classic.mat"]
 
@@ -119,34 +119,46 @@ import time, csv
 from pathlib import Path
 import sys
 import numpy as np
-from scipy import sparse  # si besoin plus tard
+from scipy import sparse
+from sklearn.preprocessing import normalize
 
-# Répertoire racine du projet (le dossier qui contient l1_onmf.py, datasets.py, data/, experiments/)
-ROOT = Path(__file__).resolve().parents[1]
+# --- IMPORTANT: mettre le parent de l1_ONMF dans sys.path ---
+PKG_PARENT = Path(__file__).resolve().parents[2]  # ...\Research Project
+if str(PKG_PARENT) not in sys.path:
+    sys.path.insert(0, str(PKG_PARENT))
 
-# DATA_DIR basé sur l'emplacement du script, pas sur le cwd
+# Chemins de data (basÃ© sur le package)
+ROOT = Path(__file__).resolve().parents[1]        # ...\Research Project\l1_ONMF
 DATA_DIR = ROOT / "data" / "docs"
 
-# -- rendre importables les modules locaux (datasets, l1_onmf, metrics, ...) --
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from datasets import load_doc_mat
-from l1_onmf import alternating_l1_onmf, L1ONMFOptions
-from metrics import clustering_accuracy_hungarian, ari, nmi
-
+# Imports via le package (PAS en relatif local)
+from l1_ONMF.datasets import load_doc_mat
+from l1_ONMF import alternating_l1_onmf, L1ONMFOptions
+from l1_ONMF.metrics import clustering_accuracy_hungarian, ari, nmi
 
 def run_one(path):
     X, y, r = load_doc_mat(path)
 
+    # aide la mÃ©diane pondÃ©rÃ©e Ã  converger vers des profils sÃ©mantiques
+    X = normalize(X, norm='l1', axis=0)
+
     opts = L1ONMFOptions(
         r=r,
         maxiter=MAXITER,
-        delta=TOL,
+        l1_tol=TOL,
+        patience=10,
         seed=SEED,
-        verbose=False,
-        log_errors=False,   # mets True si tu veux tracer la convergence
+        verbose=True,
+        log_errors=True,
+        enforce_W_nonneg=True,   # pour docs câ€™est cohÃ©rent
+        init="snpa",
+        n_init=3,                # petit multi-start
+        init_prune_top=500        # OPTION INIT seulement (mets None si tu veux)
     )
+
+
+
+
 
     t0 = time.perf_counter()
     W, H, info = alternating_l1_onmf(X, opts)   
@@ -180,7 +192,7 @@ def main():
         w.writeheader()
         for r in rows:
             w.writerow(r)
-    print(f"Résultats écrits dans {OUT_CSV}")
+    print(f"RÃ©sultats Ã©crits dans {OUT_CSV}")
 
 if __name__ == "__main__":
     main()
@@ -189,17 +201,17 @@ if __name__ == "__main__":
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\experiments\hsi_experiments.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\hsi_experiments.py =====
 
 # experiments/hsi_experiments.py
 # ==============================
 # L1-ONMF sur un jeu hyperspectral .mat sans argparse.
-# Modifie le bloc PARAMÈTRES ci-dessous et lance simplement:
+# Modifie le bloc PARAMÃˆTRES ci-dessous et lance simplement:
 #     python experiments/hsi_experiments.py
 
-# ===== PARAMÈTRES =====
+# ===== PARAMÃˆTRES =====
 DATA_DIR = "./data/hsi"  # dossier des .mat HSI
-EXP      = "Moffet"      # "Moffet" | "Samson" | "Jasper" (ignoré si MAT_PATH non vide)
+EXP      = "Moffet"      # "Moffet" | "Samson" | "Jasper" (ignorÃ© si MAT_PATH non vide)
 MAT_PATH = ""            # ex: "./data/hsi/Moffet.mat"
 MAXITER  = 100
 TOL      = 1e-6
@@ -238,10 +250,11 @@ def main():
     opts = L1ONMFOptions(
         r=r,
         maxiter=MAXITER,
-        delta=TOL,
+        l1_tol=TOL,
+        patience=3,
         seed=SEED,
         verbose=False,
-        log_errors=False,  # passe à True si tu veux voir la convergence
+        log_errors=False,
     )
 
     t0 = time.perf_counter()
@@ -254,7 +267,7 @@ def main():
         score = mrsa(Wtrue, W_aligned)
         print(f"MRSA (plus petit est meilleur) = {score:.2f}%")
     else:
-        print("Wtrue non fourni dans le .mat — MRSA non évalué.")
+        print("Wtrue non fourni dans le .mat â€” MRSA non Ã©valuÃ©.")
 
 if __name__ == "__main__":
     main()
@@ -263,14 +276,14 @@ if __name__ == "__main__":
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\experiments\print_latex_table.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\print_latex_table.py =====
 
 # examples/print_latex_table.py
 import csv, sys
 from statistics import mean
 
 def esc(s: str) -> str:
-    # Échapper _ pour LaTeX
+    # Ã‰chapper _ pour LaTeX
     return s.replace("_", r"\_")
 
 def main(csv_path, label="tab:l1_onmf_docs"):
@@ -284,7 +297,7 @@ def main(csv_path, label="tab:l1_onmf_docs"):
             r["iters"] = int(r["iters"]) if r["iters"] not in (None, "", "None") else None
             rows.append(r)
 
-    # Moyennes pondérées par n (nb de documents), comme dans le papier
+    # Moyennes pondÃ©rÃ©es par n (nb de documents), comme dans le papier
     total_n = sum(r["n"] for r in rows)
     wmean_acc = sum(r["acc"] * r["n"] for r in rows) / total_n if total_n > 0 else mean([r["acc"] for r in rows])
     wmean_ari = sum(r["ari"] * r["n"] for r in rows) / total_n if total_n > 0 else mean([r["ari"] for r in rows])
@@ -313,7 +326,7 @@ def main(csv_path, label="tab:l1_onmf_docs"):
           f"& {mean([x['time_s'] for x in rows]):.2f} "
           f"& {iters_mean_str} \\\\ \\hline")
     print("\\end{tabular}")
-    print("\\caption{Résultats L1-ONMF sur 15 jeux de documents.}")
+    print("\\caption{RÃ©sultats L1-ONMF sur 15 jeux de documents.}")
     print(f"\\label{{{label}}}")
     print("\\end{center}")
     print("\\end{table}")
@@ -329,7 +342,7 @@ if __name__ == "__main__":
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\experiments\run_synthetic.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\run_synthetic.py =====
 
 # examples/run_synthetic.py
 import numpy as np
@@ -339,7 +352,7 @@ from metrics import clustering_accuracy_hungarian
 rng = np.random.default_rng(0)
 m, n, r = 10, 300, 3
 
-# Génère 3 colonnes "centroïdes" et des échelles positives
+# GÃ©nÃ¨re 3 colonnes "centroÃ¯des" et des Ã©chelles positives
 W_true = np.abs(rng.normal(size=(m, r)))
 H_true = np.zeros((r, n))
 y_true = np.zeros(n, dtype=int)
@@ -355,13 +368,13 @@ W, H, info = alternating_l1_onmf(X, r, maxiter=100, tol=1e-6, init_seed=0, verbo
 
 y_pred = H.argmax(axis=0) + 1
 acc = clustering_accuracy_hungarian(y_true, y_pred)
-print(f"Accuracy synthétique = {acc*100:.2f}% — iters={info.get('n_iter')}")
+print(f"Accuracy synthÃ©tique = {acc*100:.2f}% â€” iters={info.get('n_iter')}")
 
 
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\experiments\test_matrice.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\test_matrice.py =====
 
 import time
 from pathlib import Path
@@ -369,13 +382,13 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ---------- PARAMÈTRES ----------
-USE_TOY = True          # True pour tester la 10x10, False pour classic.mat
+# ---------- PARAMÃˆTRES ----------
+USE_TOY = False        # True pour tester la 10x10, False pour classic.mat
 DATASET_NAME = "classic.mat"
 MAXITER = 50
 TOL = 1e-6
 SEED = 0
-DIM = 20
+DIM = 2000
 # -------------------------------
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -389,24 +402,24 @@ from datasets import load_doc_mat
 
 def make_toy_matrix(m: int, n: int, r: int = 3, noise: float = 0.05, seed: int = 0):
     """
-    Génère une petite matrice X = W_true @ H_true + bruit,
+    GÃ©nÃ¨re une petite matrice X = W_true @ H_true + bruit,
     avec des clusters "propres".
     """
     rng = np.random.default_rng(seed)
 
-    # W_true : "centroïdes" positifs
+    # W_true : "centroÃ¯des" positifs
     W_true = np.abs(rng.normal(size=(m, r)))
 
-    # H_true : chaque colonne appartient à un seul cluster, avec une échelle positive
+    # H_true : chaque colonne appartient Ã  un seul cluster, avec une Ã©chelle positive
     H_true = np.zeros((r, n))
     y_true = np.zeros(n, dtype=int)
     for j in range(n):
         c = rng.integers(0, r)                      # cluster 0..r-1
-        s = np.abs(rng.normal(loc=1.0, scale=0.2))  # échelle > 0
+        s = np.abs(rng.normal(loc=1.0, scale=0.2))  # Ã©chelle > 0
         H_true[c, j] = s
-        y_true[j] = c + 1                           # labels 1..r pour compat avec métriques
+        y_true[j] = c + 1                           # labels 1..r pour compat avec mÃ©triques
 
-    # Matrice observée X
+    # Matrice observÃ©e X
     X = W_true @ H_true + noise * rng.normal(size=(m, n))
 
     return X, y_true, r, W_true, H_true
@@ -420,9 +433,10 @@ def run_on_matrix(X, y_true, r, label: str):
     opts = L1ONMFOptions(
         r=r,
         maxiter=MAXITER,
-        delta=TOL,
+        l1_tol=TOL,
+        patience=3,
         seed=SEED,
-        verbose=True,      # logs détaillés par itération
+        verbose=True,      
         log_errors=True,   # stocke les erreurs relatives L1
         init="warm_fro",
     )
@@ -442,18 +456,32 @@ def run_on_matrix(X, y_true, r, label: str):
         print(f"ARI  = {ari(y_true, y_pred):.4f}")
         print(f"NMI  = {nmi(y_true, y_pred):.4f}")
 
-    # Pour classic.mat, W et H sont énormes : on évite d'imprimer tout.
+    
     if USE_TOY:
-        print("\nW (estimé) =")
+        print("\nW (estimÃ©) =")
         with np.printoptions(precision=3, suppress=True, linewidth=200):
             print(np.asarray(W))
 
-        print("\nH (estimé) =")
+        print("\nH (estimÃ©) =")
         with np.printoptions(precision=3, suppress=True, linewidth=200):
             print(np.asarray(H))
 
     else:
-        print(f"\nW shape = {W.shape}, H shape = {H.shape} (matrices non affichées car trop grandes)")
+        print(f"\nW shape = {W.shape}, H shape = {H.shape} (matrices non affichÃ©es car trop grandes)")
+
+    # # Tracer la courbe d'erreur relative L1
+    # errs = info.get("rel_l1_errors", None)
+    # if errs is not None and len(errs) > 0:
+    #     iters = np.arange(1, len(errs) + 1)
+    #     plt.figure()
+    #     plt.plot(iters, errs, marker="o")
+    #     plt.xlabel("ItÃ©ration")
+    #     plt.ylabel("Erreur relative L1")
+    #     plt.title(f"Convergence L1-ONMF ({label})")
+    #     plt.grid(True)
+    #     plt.show()
+    # else:
+    #     print("Pas d'erreurs enregistrÃ©es dans info['rel_l1_errors'].")
 
     # Tracer la courbe d'erreur relative L1
     errs = info.get("rel_l1_errors", None)
@@ -461,30 +489,37 @@ def run_on_matrix(X, y_true, r, label: str):
         iters = np.arange(1, len(errs) + 1)
         plt.figure()
         plt.plot(iters, errs, marker="o")
-        plt.xlabel("Itération")
+        plt.xlabel("ItÃ©ration")
         plt.ylabel("Erreur relative L1")
         plt.title(f"Convergence L1-ONMF ({label})")
         plt.grid(True)
-        plt.show()
+
+        out = ROOT / "experiments" / "convergence.png"
+        plt.savefig(out, dpi=200, bbox_inches="tight")
+        plt.close()
+        print(f"Plot sauvegardÃ© : {out}")
     else:
-        print("Pas d'erreurs enregistrées dans info['rel_l1_errors'].")
+        print("Pas d'erreurs enregistrÃ©es dans info['rel_l1_errors'].")
+
 
 
 def main():
     if USE_TOY:
-        # ====== CAS MATRICE 10x10 ======
+        # ====== CAS MATRICE  ======
         X, y_true, r, W_true, H_true = make_toy_matrix(m=DIM, n=DIM, r=3, noise=0.05, seed=0)
-        print(f">>> Test sur matrice synthétique {DIM}x{DIM}")
-        print("W_true et H_true connus (pas nécessaire pour l'algo, mais pour le debug).")
+        print(f">>> Test sur matrice synthÃ©tique {DIM}x{DIM}")
+        print("W_true et H_true connus (pas nÃ©cessaire pour l'algo, mais pour le debug).")
         run_on_matrix(X, y_true, r, label=f"{DIM}x{DIM}")
+        
+
 
     else:
         # ====== CAS classic.mat ======
         data_dir = ROOT / "data" / "docs"
         mat_path = data_dir / DATASET_NAME
-        print(f">>> Test sur dataset réel : {mat_path}")
+        print(f">>> Test sur dataset rÃ©el : {mat_path}")
 
-        X, y_true, r = load_doc_mat(str(mat_path))  # X peut être sparse, l1_onmf le gère
+        X, y_true, r = load_doc_mat(str(mat_path))  # X peut Ãªtre sparse, l1_onmf le gÃ¨re
         run_on_matrix(X, y_true, r, label=DATASET_NAME)
 
 
@@ -494,78 +529,105 @@ if __name__ == "__main__":
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\init.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\init.py =====
 
+# l1_ONMF/init.py
 import numpy as np
+try:
+    import scipy.sparse as sp
+except ImportError:
+    sp = None
 
-def init_W_random(X: np.ndarray, r: int, seed: int | None = None, nonneg: bool = True):
+from .snpa import snpa
+
+
+def _is_sparse(X) -> bool:
+    return sp is not None and sp.isspmatrix(X)
+
+
+def init_W_snpa(X, r: int, seed: int | None = None):
+    # SNPA retourne W0 dense (m x r), ok car r petit
+    K, W0, info = snpa(X, r, normalize="l1", nnls_iter=50, seed=seed, verbose=False)
+    norms = np.linalg.norm(W0, axis=0)
+    norms[norms == 0] = 1.0
+    W0 = W0 / norms[None, :]
+    return W0, K, info
+
+
+def init_W_random(X, r: int, seed: int | None = None, nonneg: bool = True):
     """
-    Simple random initialization: pick r random columns of X (if nonneg),
-    otherwise Gaussian random then nonneg projection if asked.
+    Random init (sparse-friendly):
+    - Si X est sparse: on Ã©chantillonne r colonnes et on les met en dense (m x r)
+    - Sinon: on Ã©chantillonne colonnes de X ou gaussien
     """
     rng = np.random.default_rng(seed)
-    m, n = X.shape
-    if nonneg and np.all(X >= 0):
+
+    if _is_sparse(X):
+        Xcsc = X.tocsc()
+        m, n = Xcsc.shape
         idx = rng.choice(n, size=r, replace=False)
-        W = X[:, idx].astype(float, copy=True)
-        # Avoid zero columns
-        norms = np.linalg.norm(W, axis=0)
-        norms[norms == 0] = 1.0
-        W /= norms[None, :]
-        return W
-    else:
-        W = rng.standard_normal((m, r))
+        W = Xcsc[:, idx].toarray().astype(float)
         if nonneg:
             W = np.maximum(0.0, W)
-        # normalize columns
-        norms = np.linalg.norm(W, axis=0)
-        norms[norms == 0] = 1.0
-        W /= norms[None, :]
-        return W
+    else:
+        Xd = np.asarray(X, dtype=float)
+        m, n = Xd.shape
+        if nonneg and np.all(Xd >= 0):
+            idx = rng.choice(n, size=r, replace=False)
+            W = Xd[:, idx].copy()
+        else:
+            W = rng.standard_normal((m, r))
+            if nonneg:
+                W = np.maximum(0.0, W)
+
+    norms = np.linalg.norm(W, axis=0)
+    norms[norms == 0] = 1.0
+    W /= norms[None, :]
+    return W
 
 
 def warm_start_from_fro_onmf(X: np.ndarray, r: int, iters: int = 3, seed: int | None = None):
     """
-    Quick-and-dirty warm start via a few Frobenius ONMF-like steps:
-    - Start random W
-    - Alternate: assign columns by cosine, compute H (nonneg), update W = X H^T
-    Returns W (not necessarily nonnegative).
+    Warm start Frobenius (dense seulement).
     """
     rng = np.random.default_rng(seed)
+    X = np.asarray(X, dtype=float)
     m, n = X.shape
     W = rng.standard_normal((m, r))
-    # normalize columns
     W /= (np.linalg.norm(W, axis=0, keepdims=True) + 1e-12)
+
     for _ in range(iters):
-        # normalize W
         Wn = W / (np.linalg.norm(W, axis=0, keepdims=True) + 1e-12)
-        A = Wn.T @ X  # r x n
+        A = Wn.T @ X
         assign = np.argmax(A, axis=0)
+
         H = np.zeros((r, n), dtype=float)
         for j in range(n):
             k = assign[j]
             num = float(W[:, k].T @ X[:, j])
             den = float(W[:, k].T @ W[:, k]) + 1e-12
             H[k, j] = max(0.0, num / den)
-        # row-normalize H and co-scale W
+
         row_norms = np.linalg.norm(H, axis=1) + 1e-16
         H = H / row_norms[:, None]
         W = W * row_norms[None, :]
-        # update W
+
         for k in range(r):
             Kj = np.where(H[k, :] > 0)[0]
             if Kj.size > 0:
                 W[:, k] = X[:, Kj] @ H[k, Kj].T
-        # renormalize
+
         W /= (np.linalg.norm(W, axis=0, keepdims=True) + 1e-12)
+
     return W
 
 
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\l1_onmf.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\l1_onmf.py =====
 
+# l1_ONMF/l1_onmf.py
 from dataclasses import dataclass
 import numpy as np
 
@@ -574,124 +636,222 @@ try:
 except ImportError:
     sp = None
 
-try:
-    from .init import init_W_random, warm_start_from_fro_onmf
-    from .update_h import update_H_l1
-    from .update_w import update_W_l1
-    from .normalize import normalize_rows_H_and_rescale_W
-    from .utils import ensure_nonempty_clusters
-except ImportError:
-    from init import init_W_random, warm_start_from_fro_onmf
-    from update_h import update_H_l1
-    from update_w import update_W_l1
-    from normalize import normalize_rows_H_and_rescale_W
-    from utils import ensure_nonempty_clusters
-
+from .init import init_W_random, warm_start_from_fro_onmf, init_W_snpa
+from .update_h import update_H_l1
+from .update_w import update_W_l1
+from .normalize import normalize_rows_H_and_rescale_W
+from .utils import ensure_nonempty_clusters
 
 
 @dataclass
 class L1ONMFOptions:
     r: int
     maxiter: int = 100
-    delta: float = 1e-6           # stopping on ||H - H_prev||_F
+    l1_tol: float = 1e-7
+    patience: int = 5
     enforce_W_nonneg: bool = False
-    init: str = "warm_fro"            # "auto" | "random" | "warm_fro"
+    init: str = "auto"           # "auto" | "random" | "warm_fro" | "snpa"
     seed: int | None = None
+    n_init: int = 5
     log_errors: bool = True
     verbose: bool = True
     eps: float = 1e-12
-
-def rel_l1_error(X: np.ndarray, W: np.ndarray, H: np.ndarray) -> float:
-    num = np.sum(np.abs(X - W @ H))
-    den = np.sum(np.abs(X)) + 1e-16
-    return float(num / den)
+    # Option INIT uniquement (hors Ã©noncÃ©, donc uniquement pour dÃ©marrer mieux)
+    init_prune_top: int | None = None   # ex: 500 pour docs (mettre None pour dÃ©sactiver)
 
 
+def _is_sparse(X) -> bool:
+    return sp is not None and sp.isspmatrix(X)
 
-def alternating_l1_onmf(X: np.ndarray, opts: L1ONMFOptions):
+
+def _abs_col_l1(W: np.ndarray) -> np.ndarray:
+    # ||w_k||_1 pour chaque colonne k (valable mÃªme si W signÃ©)
+    return np.sum(np.abs(W), axis=0)
+
+
+def l1_obj_hard_sparse(Xcsc, W: np.ndarray, H: np.ndarray, eps: float = 1e-12) -> float:
     """
-    Main 2-BCD loop for L1-ONMF with hard clustering induced by H>=0, H H^T = I.
+    Objectif exact ||X - WH||_1 pour X sparse, en exploitant hard clustering de H.
+    Ne forme jamais WH.
     """
-    # Convertit les matrices creuses SciPy en dense si besoin
-    if sp is not None and sp.isspmatrix(X):
-        X = X.toarray()
+    k, n = H.shape
+    assign = np.argmax(H, axis=0).astype(int)
+    s = H[assign, np.arange(n)]
+
+    absW_l1 = _abs_col_l1(W)  # (k,)
+
+    total = 0.0
+    indptr, indices, data = Xcsc.indptr, Xcsc.indices, Xcsc.data
+
+    for j in range(n):
+        kk = assign[j]
+        sj = float(s[j])
+        a, b = indptr[j], indptr[j + 1]
+        idx = indices[a:b]
+        xnz = data[a:b]
+
+        wk_idx = W[idx, kk]
+        # coÃ»t sur nnz : sum |x - s*w|
+        total += float(np.sum(np.abs(xnz - sj * wk_idx)))
+
+        # coÃ»t sur zÃ©ros : sum_{d not in idx} |0 - s*w_d| = s * (||w||_1 - sum_{idx} |w|)
+        total += sj * float(absW_l1[kk] - np.sum(np.abs(wk_idx)))
+
+    return total
+
+
+def l1_obj_dense(X: np.ndarray, W: np.ndarray, H: np.ndarray) -> float:
+    R = X - W @ H
+    return float(np.sum(np.abs(R)))
+
+
+def alternating_l1_onmf(X, opts: L1ONMFOptions):
+    # --- PrÃ©pare X sans densifier inutilement ---
+    if _is_sparse(X):
+        Xcsc = X.tocsc().astype(float)
+        Xcsr = X.tocsr().astype(float)
+        m, n = Xcsc.shape
+        den = float(np.sum(np.abs(Xcsc.data)) + 1e-16)
+        X_is_nonneg = bool((Xcsc.data >= 0).all())
     else:
-        X = np.asarray(X, dtype=float)
+        Xd = np.asarray(X, dtype=float)
+        m, n = Xd.shape
+        den = float(np.sum(np.abs(Xd)) + 1e-16)
+        X_is_nonneg = bool(np.all(Xd >= 0))
 
-    m, n = X.shape
-    r = opts.r
+    r = int(opts.r)
 
-    # --- Init W ---
-    if opts.init == "random":
-        W = init_W_random(X, r, seed=opts.seed, nonneg=opts.enforce_W_nonneg and np.all(X >= 0))
-    elif opts.init == "warm_fro":
-        W = warm_start_from_fro_onmf(X, r, iters=3, seed=opts.seed)
-        if opts.enforce_W_nonneg:
-            W = np.maximum(0.0, W)
-    else:  # auto
-        if np.all(X >= 0):
-            W = init_W_random(X, r, seed=opts.seed, nonneg=True)
+    def _init_W(seed: int | None):
+        init = opts.init
+
+        if init == "auto":
+            if X_is_nonneg:
+                init = "snpa" if _is_sparse(X) else "random"
+            else:
+                init = "warm_fro"
+
+        if init == "snpa":
+            if not X_is_nonneg:
+                raise ValueError("init='snpa' nÃ©cessite X >= 0.")
+            W0, _, _ = init_W_snpa(Xcsc if _is_sparse(X) else Xd, r, seed=seed)
+        elif init == "random":
+            W0 = init_W_random(Xcsc if _is_sparse(X) else Xd, r, seed=seed,
+                               nonneg=(opts.enforce_W_nonneg and X_is_nonneg))
+        elif init == "warm_fro":
+            if _is_sparse(X):
+                # Ã‰vite de densifier un Ã©norme doc-term matrix
+                W0 = init_W_random(Xcsc, r, seed=seed, nonneg=(opts.enforce_W_nonneg and X_is_nonneg))
+            else:
+                W0 = warm_start_from_fro_onmf(Xd, r, iters=3, seed=seed)
         else:
-            W = warm_start_from_fro_onmf(X, r, iters=3, seed=opts.seed)
-            if opts.enforce_W_nonneg:
-                W = np.maximum(0.0, W)
+            raise ValueError(f"Unknown init='{opts.init}'")
 
-    H = np.zeros((r, n), dtype=float)
-    errs = []
-    H_prev = H.copy()
+        if opts.enforce_W_nonneg:
+            W0 = np.maximum(0.0, W0)
 
-    if opts.verbose:
-        print("Starting L1-ONMF: m={}, n={}, r={}, maxiter={}".format(m, n, r, opts.maxiter))
+        # Pruning INIT uniquement (optionnel)
+        if opts.init_prune_top is not None and opts.init_prune_top > 0 and opts.init_prune_top < W0.shape[0]:
+            top = int(opts.init_prune_top)
+            for kk in range(W0.shape[1]):
+                col = W0[:, kk]
+                if np.count_nonzero(col) > top:
+                    keep = np.argpartition(col, -top)[-top:]
+                    mask = np.zeros_like(col, dtype=bool)
+                    mask[keep] = True
+                    col[~mask] = 0.0
+                    W0[:, kk] = col
 
-    for it in range(1, opts.maxiter + 1):
-        # --- Erreur au début de l'itération ---
-        err_before = rel_l1_error(X, W, H)
-        if opts.verbose:
-            print(f"\nIter {it:03d} | avant updates : rel L1 err = {err_before:.6f}")
+        # normalise colonnes
+        norms = np.linalg.norm(W0, axis=0) + opts.eps
+        return W0 / norms[None, :]
 
-        # --- Update H (assignments + scales) ---
-        H_prev = H.copy()
-        H = update_H_l1(X, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-        err_after_H = rel_l1_error(X, W, H)
-        if opts.verbose:
-            print(f"Iter {it:03d} | après update_H : rel L1 err = {err_after_H:.6f}")
+    def _rel_l1_error(W, H) -> float:
+        if _is_sparse(X):
+            obj = l1_obj_hard_sparse(Xcsc, W, H, eps=opts.eps)
+        else:
+            obj = l1_obj_dense(Xd, W, H)
+        return float(obj / den)
 
-        # Safety: avoid empty clusters (rare)
-        H = ensure_nonempty_clusters(H, X)
+    def _run_once(seed: int | None):
+        W = _init_W(seed)
 
-        # --- Normalize rows of H and co-scale W (preserves WH) ---
+        # init H via L1 assignment exact (sparse-friendly)
+        H = update_H_l1(Xcsc if _is_sparse(X) else Xd, W,
+                        enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
+        assign = np.argmax(H, axis=0)
+        print("  #clusters sizes:", np.bincount(assign, minlength=opts.r))
+        print("  H nonzeros:", np.count_nonzero(H))
+
+        H = ensure_nonempty_clusters(H)
         H, W = normalize_rows_H_and_rescale_W(H, W)
-        err_after_norm = rel_l1_error(X, W, H)
+
+        errs = []
+        prev = None
+        stall = 0
+
         if opts.verbose:
-            print(f"Iter {it:03d} | après normalize(H,W) : rel L1 err = {err_after_norm:.6f}")
+            print(f"Start L1-ONMF (exact): m={m} n={n} r={r} init={opts.init} seed={seed}")
 
-        # --- Update W (coordinate-wise weighted medians) ---
-        W = update_W_l1(X, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-        err_after_W = rel_l1_error(X, W, H)
-        if opts.verbose:
-            print(f"Iter {it:03d} | après update_W : rel L1 err = {err_after_W:.6f}")
-
-        # --- Error / logging global ---
-        if opts.log_errors:
-            errs.append(err_after_W)
+        for it in range(1, opts.maxiter + 1):
             if opts.verbose:
-                print(f"Iter {it:03d} | rel L1 err (log) = {err_after_W:.6f}")
+                print(f"\nIter {it:03d} | start relL1={_rel_l1_error(W,H):.6f}")
 
-        # --- stopping sur H (comme avant) ---
-        diff = np.linalg.norm(H - H_prev, ord="fro")
-        if diff < opts.delta and it >= 3:
+            # H update
+            H = update_H_l1(Xcsc if _is_sparse(X) else Xd, W,
+                            enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
+            assign = np.argmax(H, axis=0)
+            print("  #clusters sizes:", np.bincount(assign, minlength=opts.r))
+            print("  H nonzeros:", np.count_nonzero(H))
+
+            H = ensure_nonempty_clusters(H)
+            H, W = normalize_rows_H_and_rescale_W(H, W)
+
+            # W update
+            W = update_W_l1(Xcsr if _is_sparse(X) else Xd, H,
+                            enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
+            print("  W nnz:", np.count_nonzero(W), " / ", W.size)
+
+
+            e = _rel_l1_error(W, H)
+            if opts.log_errors:
+                errs.append(e)
             if opts.verbose:
-                print(f"Converged at iter {it} (||H-H_prev||_F={diff:.3e}).")
-            break
+                print(f"Iter {it:03d} | end   relL1={e:.6f}")
+
+            if prev is not None and it >= 3:
+                rel_impr = (prev - e) / (abs(prev) + 1e-16)
+                stall = stall + 1 if rel_impr < opts.l1_tol else 0
+                if stall >= opts.patience:
+                    if opts.verbose:
+                        print(f"Stop (stagnation): rel_impr={rel_impr:.3e} < {opts.l1_tol}")
+                    break
+            prev = e
+
+        info = {
+            "rel_l1_errors": np.array(errs, dtype=float),
+            "num_iter": it,
+            "final_err": float(errs[-1] if errs else _rel_l1_error(W,H)),
+            "seed": seed,
+        }
+        return W, H, info
+
+    # Multi-start
+    n_init = max(1, int(opts.n_init))
+    base = 0 if opts.seed is None else int(opts.seed)
+
+    best = (None, None, {"final_err": np.inf})
+    for t in range(n_init):
+        Wt, Ht, infot = _run_once(base + t)
+        if infot["final_err"] < best[2]["final_err"]:
+            best = (Wt, Ht, infot)
+
+    return best
 
 
-    return W, H, {"rel_l1_errors": np.array(errs), "num_iter": it}
 
 
 
-
-
-===== FILE: C:\ICare\research\l1_ONMF\medians.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\medians.py =====
 
 import numpy as np
 
@@ -740,7 +900,7 @@ def safe_ratio(num: np.ndarray, den: np.ndarray, eps: float = 1e-12) -> np.ndarr
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\metrics.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\metrics.py =====
 
 # metrics.py
 import numpy as np
@@ -759,7 +919,7 @@ def clustering_accuracy_hungarian(y_true: np.ndarray, y_pred: np.ndarray) -> flo
     y_true_u, y_true_inv = np.unique(y_true, return_inverse=True)
     y_pred_u, y_pred_inv = np.unique(y_pred, return_inverse=True)
     r = max(len(y_true_u), len(y_pred_u))
-    # matrice de coût = -compte des co-occurrences
+    # matrice de coÃ»t = -compte des co-occurrences
     C = np.zeros((r, r), dtype=np.int64)
     for t, p in zip(y_true_inv, y_pred_inv):
         C[t, p] += 1
@@ -771,12 +931,12 @@ def clustering_accuracy_hungarian(y_true: np.ndarray, y_pred: np.ndarray) -> flo
 def mrsa(a: np.ndarray, b: np.ndarray) -> float:
     """
     Mean Removed Spectral Angle (en pourcents, 0..100).
-    A et B: matrices m x r (colonnes alignées par permutation au préalable).
+    A et B: matrices m x r (colonnes alignÃ©es par permutation au prÃ©alable).
     """
     A = np.asarray(a, dtype=float)
     B = np.asarray(b, dtype=float)
     if A.shape != B.shape:
-        raise ValueError("A et B doivent avoir les mêmes dimensions (m x r).")
+        raise ValueError("A et B doivent avoir les mÃªmes dimensions (m x r).")
     r = A.shape[1]
     scores = []
     for k in range(r):
@@ -791,8 +951,8 @@ def mrsa(a: np.ndarray, b: np.ndarray) -> float:
 
 def reorder_by_hungarian(W_ref: np.ndarray, W_est: np.ndarray):
     """
-    Trouve la meilleure permutation de colonnes de W_est pour s'aligner sur W_ref (via coût MRSA pairwise).
-    Retourne W_est permuté et l’assignation (liste d'indices).
+    Trouve la meilleure permutation de colonnes de W_est pour s'aligner sur W_ref (via coÃ»t MRSA pairwise).
+    Retourne W_est permutÃ© et lâ€™assignation (liste d'indices).
     """
     r = W_ref.shape[1]
     # matrice de distances (MRSA)
@@ -813,7 +973,7 @@ def nmi(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\normalize.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\normalize.py =====
 
 import numpy as np
 
@@ -833,64 +993,321 @@ def normalize_rows_H_and_rescale_W(H: np.ndarray, W: np.ndarray, eps: float = 1e
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\update_h.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\snpa.py =====
+
+# l1_onmf/snpa.py
+from __future__ import annotations
 
 import numpy as np
+
 try:
-    from .medians import weighted_median
+    import scipy.sparse as sp
 except ImportError:
-    from medians import weighted_median
+    sp = None
 
 
-def _l1_scale_for_pair(x: np.ndarray, w: np.ndarray, nonneg_s: bool = True, eps: float = 1e-12) -> float:
+def _is_sparse(X) -> bool:
+    return sp is not None and sp.isspmatrix(X)
+
+
+def _col_l1_normalize_inplace_csc(Xcsc, eps: float = 1e-12):
     """
-    Solve s* = argmin_{s >= 0 (if nonneg_s)} ||x - s w||_1 via weighted median.
-    If w is signed, weights are |w| and ratios are x / w.
-    Returns s* (>=0 if nonneg_s else real >= 0 still projected by caller).
+    Normalise les colonnes d'une CSC: x_j <- x_j / (sum(x_j)+eps).
+    Retourne les sommes originales (pour info).
     """
-    # Identify entries with non-negligible |w|
-    mask = np.abs(w) > eps
+    n = Xcsc.shape[1]
+    col_sums = np.asarray(Xcsc.sum(axis=0)).ravel()
+    col_sums = np.maximum(col_sums, eps)
+    inv = 1.0 / col_sums
+
+    # scale data in-place par colonne
+    indptr = Xcsc.indptr
+    data = Xcsc.data
+    for j in range(n):
+        a, b = indptr[j], indptr[j + 1]
+        if a != b:
+            data[a:b] *= inv[j]
+    return col_sums
+
+
+def _col_l2_norms_sq_csc(Xcsc) -> np.ndarray:
+    """
+    ||x_j||_2^2 pour chaque colonne d'une CSC (sans densifier).
+    """
+    n = Xcsc.shape[1]
+    indptr = Xcsc.indptr
+    data = Xcsc.data
+    out = np.zeros(n, dtype=float)
+    for j in range(n):
+        a, b = indptr[j], indptr[j + 1]
+        if a != b:
+            out[j] = float(np.dot(data[a:b], data[a:b]))
+    return out
+
+
+def nnls_hals(AtA: np.ndarray, AtB: np.ndarray, n_iter: int = 50, eps: float = 1e-12) -> np.ndarray:
+    """
+    RÃ©sout (approx) NNLS en bloc: min_{H>=0} ||X - W H||_F^2
+    en utilisant HALS vectorisÃ©, oÃ¹:
+      AtA = W^T W  (k x k)
+      AtB = W^T X  (k x n)
+    Retour: H (k x n) >= 0
+    """
+    k, n = AtB.shape
+    H = np.maximum(0.0, AtB / (np.diag(AtA)[:, None] + eps))
+
+    diag = np.diag(AtA).copy()
+    diag[diag < eps] = eps
+
+    for _ in range(n_iter):
+        # un sweep HALS
+        for i in range(k):
+            # grad component: (AtA[i,:] @ H) - AtB[i,:]
+            AiH = AtA[i, :] @ H  # (n,)
+            H[i, :] = np.maximum(0.0, H[i, :] + (AtB[i, :] - AiH) / diag[i])
+    return H
+
+
+def snpa(
+    X,
+    r: int,
+    *,
+    normalize: str = "l1",      # "l1" ou "none"
+    nnls_iter: int = 50,
+    eps: float = 1e-12,
+    seed: int | None = None,
+    verbose: bool = False,
+):
+    """
+    SNPA (Successive Nonnegative Projection Algorithm)
+    SÃ©lectionne r colonnes de X (indices) pour initialiser W = X[:, K].
+
+    HypothÃ¨ses utiles:
+      - X >= 0 (docs/HSI ok)
+      - r petit (4..50 typiquement)
+
+    Retour:
+      K: np.ndarray shape (r,) indices sÃ©lectionnÃ©s
+      W: np.ndarray shape (m, r) = X[:,K] (dense)
+      info: dict (rÃ©sidus, etc.)
+    """
+    if r <= 0:
+        raise ValueError("r doit Ãªtre >= 1")
+
+    rng = np.random.default_rng(seed)
+
+    # --- PrÃ©pare X (sparse-friendly) ---
+    if _is_sparse(X):
+        Xcsc = X.tocsc(copy=True).astype(float)
+        m, n = Xcsc.shape
+        if (Xcsc.data < 0).any():
+            raise ValueError("SNPA nÃ©cessite X >= 0 (valeurs nÃ©gatives dÃ©tectÃ©es).")
+        if normalize == "l1":
+            _ = _col_l1_normalize_inplace_csc(Xcsc, eps=eps)
+        x_norm2 = _col_l2_norms_sq_csc(Xcsc)
+    else:
+        Xd = np.asarray(X, dtype=float)
+        if np.any(Xd < 0):
+            raise ValueError("SNPA nÃ©cessite X >= 0 (valeurs nÃ©gatives dÃ©tectÃ©es).")
+        m, n = Xd.shape
+        if normalize == "l1":
+            col_sums = Xd.sum(axis=0)
+            col_sums[col_sums < eps] = 1.0
+            Xd = Xd / col_sums[None, :]
+        Xcsc = Xd  # pour unifier la suite
+        x_norm2 = np.sum(Xd * Xd, axis=0)
+
+    if r > n:
+        raise ValueError(f"r={r} > n={n} impossible.")
+
+    # --- SÃ©lection ---
+    K = []
+    resid_trace = []
+
+    # 1) premier pivot = colonne de norme max (ou alÃ©atoire si tout est nul)
+    top = min(50, n)
+    top_idx = np.argpartition(x_norm2, -top)[-top:]
+    j0 = int(rng.choice(top_idx))
+
+    if x_norm2[j0] <= eps:
+        j0 = int(rng.integers(0, n))
+    K.append(j0)
+
+    if verbose:
+        print(f"[SNPA] t=1 pick={j0} ||x||^2={x_norm2[j0]:.3e}")
+
+    # boucle
+    for t in range(2, r + 1):
+        # construit W = X[:,K]
+        if _is_sparse(Xcsc):
+            W = Xcsc[:, K].toarray()
+        else:
+            W = Xcsc[:, K].copy()
+
+        # normalise les colonnes de W (stabilitÃ© numÃ©rique)
+        norms = np.linalg.norm(W, axis=0) + eps
+        W = W / norms[None, :]
+
+        # calcule AtA, AtB
+        AtA = W.T @ W  # (t-1 x t-1)
+        if _is_sparse(Xcsc):
+            AtB = (W.T @ Xcsc).astype(float)  # (t-1 x n) dense
+        else:
+            AtB = W.T @ Xcsc
+
+        # NNLS: H = argmin_{H>=0} ||X - W H||_F^2  (approx)
+        H = nnls_hals(AtA, AtB, n_iter=nnls_iter, eps=eps)
+
+        # rÃ©sidu colonne par colonne sans former R:
+        # ||x||^2 - 2 h^T (W^T x) + h^T (W^T W) h
+        cross = np.sum(H * AtB, axis=0)                    # h^T AtB
+        quad = np.sum(H * (AtA @ H), axis=0)               # h^T AtA h
+        res2 = x_norm2 - 2.0 * cross + quad
+
+        # interdit de re-sÃ©lectionner une colonne dÃ©jÃ  prise
+        res2[np.array(K, dtype=int)] = -np.inf
+
+        top = min(10, n)
+        cand = np.argpartition(res2, -top)[-top:]
+        j = int(rng.choice(cand))
+
+        K.append(j)
+        resid_trace.append(float(res2[j]))
+
+        if verbose:
+            print(f"[SNPA] t={t} pick={j} resid^2={res2[j]:.3e}")
+
+    K = np.array(K, dtype=int)
+
+    # W final (non re-normalisÃ© ici, tu peux normaliser ensuite si tu veux)
+    if _is_sparse(Xcsc):
+        W0 = Xcsc[:, K].toarray()
+    else:
+        W0 = Xcsc[:, K].copy()
+
+    info = {"resid2_trace": np.array(resid_trace, dtype=float)}
+    return K, W0, info
+
+
+
+
+
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\update_h.py =====
+
+# l1_ONMF/update_h.py
+import numpy as np
+try:
+    import scipy.sparse as sp
+except ImportError:
+    sp = None
+
+from .medians import weighted_median
+
+
+def _is_sparse(X) -> bool:
+    return sp is not None and sp.isspmatrix(X)
+
+
+def _l1_scale_with_zeros(xnz: np.ndarray, wk_idx: np.ndarray, extra0_weight: float, eps: float) -> float:
+    """
+    Minimise s>=0 : sum_{idx} |x - s w| + sum_{not idx} |0 - s w|
+    En sparse, les termes 'not idx' se rÃ©sument Ã  ajouter (ratio=0) avec weight=sum_{not idx}|w|.
+    Les indices oÃ¹ w=0 ne contribuent pas Ã  la mÃ©diane (mais contribuent au coÃ»t via |x|).
+    """
+    abs_w = np.abs(wk_idx)
+    mask = abs_w > eps
     if not np.any(mask):
         return 0.0
-    r = x[mask] / w[mask]
-    p = np.abs(w[mask])
-    s = weighted_median(r, p)
-    if nonneg_s:
-        s = max(0.0, s)
-    return float(s)
+
+    ratios = xnz[mask] / wk_idx[mask]
+    weights = abs_w[mask]
+
+    if extra0_weight > 0:
+        ratios = np.concatenate([ratios, np.array([0.0])])
+        weights = np.concatenate([weights, np.array([extra0_weight])])
+
+    s = weighted_median(ratios, weights)
+    return float(max(0.0, s))
 
 
-def update_H_l1(X: np.ndarray,
-                W: np.ndarray,
-                enforce_W_nonneg: bool = True,
-                eps: float = 1e-12):
+def update_H_l1(X, W, enforce_W_nonneg: bool = True, eps: float = 1e-12):
     """
-    L1orthNNLS:
-    For each column x_j and each cluster k, compute s*_kj by weighted median and its L1 cost.
-    Assign j to the k with minimal cost. Build H with H[k, j] = s*_kj and zeros elsewhere.
-    Complexity (naive): O(n*k*m log m). Exploits zero weights where w_{dk}=0 implicitly.
+    Update H (hard clustering) exact pour l'objectif â„“1.
+    Pour chaque colonne j: choisir kk et s>=0 minimisant ||x_j - s w_kk||_1.
+    - X peut Ãªtre CSC/CSR ou dense
+    - W est dense (m x k)
     """
-    X = np.asarray(X, dtype=float)
     W = np.asarray(W, dtype=float)
-    m, n = X.shape
-    _, k = W.shape
+    if enforce_W_nonneg:
+        W = np.maximum(W, 0.0)
+
+    m, k = W.shape
+    absW_l1 = np.sum(np.abs(W), axis=0)  # ||w_k||_1
+
+    if _is_sparse(X):
+        Xc = X.tocsc()
+        n = Xc.shape[1]
+        H = np.zeros((k, n), dtype=float)
+        indptr, indices, data = Xc.indptr, Xc.indices, Xc.data
+
+        for j in range(n):
+            a, b = indptr[j], indptr[j + 1]
+            idx = indices[a:b]
+            xnz = data[a:b]
+
+            best_cost = np.inf
+            best_k = 0
+            best_s = 0.0
+
+            for kk in range(k):
+                wk_idx = W[idx, kk]                      # w sur les nnz de x
+                extra0 = float(absW_l1[kk] - np.sum(np.abs(wk_idx)))  # poids exact des zÃ©ros
+                if extra0 < 0:
+                    extra0 = 0.0
+
+                s = _l1_scale_with_zeros(xnz, wk_idx, extra0, eps)
+
+                # coÃ»t exact : nnz + zÃ©ros
+                cost_nz = float(np.sum(np.abs(xnz - s * wk_idx)))
+                cost0 = float(s * extra0)
+                cost = cost_nz + cost0
+
+                if cost < best_cost:
+                    best_cost = cost
+                    best_k = kk
+                    best_s = s
+
+            H[best_k, j] = best_s
+
+        return H
+
+    # dense
+    Xd = np.asarray(X, dtype=float)
+    m2, n = Xd.shape
+    assert m2 == m
     H = np.zeros((k, n), dtype=float)
 
-    # Precompute absolute W for weights
-    absW = np.abs(W)
-
     for j in range(n):
-        xj = X[:, j]
-        best_k = 0
+        xj = Xd[:, j]
+        idx = np.where(xj != 0)[0]
+        xnz = xj[idx]
+
         best_cost = np.inf
+        best_k = 0
         best_s = 0.0
 
         for kk in range(k):
-            wk = W[:, kk]
-            # scale
-            s = _l1_scale_for_pair(xj, wk, nonneg_s=True, eps=eps)
-            # cost
-            cost = np.sum(np.abs(xj - s * wk))
+            wk_idx = W[idx, kk]
+            extra0 = float(absW_l1[kk] - np.sum(np.abs(wk_idx)))
+            if extra0 < 0:
+                extra0 = 0.0
+
+            s = _l1_scale_with_zeros(xnz, wk_idx, extra0, eps)
+
+            cost_nz = float(np.sum(np.abs(xnz - s * wk_idx)))
+            cost0 = float(s * extra0)
+            cost = cost_nz + cost0
+
             if cost < best_cost:
                 best_cost = cost
                 best_k = kk
@@ -904,48 +1321,119 @@ def update_H_l1(X: np.ndarray,
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\update_w.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\update_w.py =====
 
+# l1_ONMF/update_w.py
 import numpy as np
 try:
-    from .medians import weighted_median
+    import scipy.sparse as sp
 except ImportError:
-    from medians import weighted_median
+    sp = None
+
+from .medians import weighted_median
 
 
-def update_W_l1(X: np.ndarray,
-                H: np.ndarray,
-                enforce_W_nonneg: bool = True,
-                eps: float = 1e-12):
+def _is_sparse(X) -> bool:
+    return sp is not None and sp.isspmatrix(X)
+
+
+def update_W_l1(X, H: np.ndarray, enforce_W_nonneg: bool = True, eps: float = 1e-12):
     """
-    For each cluster i and coordinate d:
-      w_{di} <- w-median of { x_{dj} / s_j } with weights s_j over j in K_i (s_j>0).
-    If enforce_W_nonneg, project negative entries to 0.
+    Update W exact pour â„“1 avec hard clustering.
+    Pour chaque mot d et cluster i:
+        w_{d,i} = weighted median des ratios (x_{d,j}/s_j) avec poids s_j,
+    en incluant les docs oÃ¹ x_{d,j}=0 via un point ratio=0 de poids (sum_s[i] - sum_{present} s_j).
+
+    Si enforce_W_nonneg, on projette w>=0.
     """
-    X = np.asarray(X, dtype=float)
     H = np.asarray(H, dtype=float)
-    m, n = X.shape
-    k = H.shape[0]
+    k, n = H.shape
+    assign = np.argmax(H, axis=0).astype(int)
+    s = H[assign, np.arange(n)].astype(float)
+
+    # somme des s par cluster
+    sum_s = np.bincount(assign, weights=s, minlength=k)
+
+    if _is_sparse(X):
+        Xr = X.tocsr().astype(float)
+        m = Xr.shape[0]
+        W = np.zeros((m, k), dtype=float)
+
+        indptr, indices, data = Xr.indptr, Xr.indices, Xr.data
+
+        for d in range(m):
+            a, b = indptr[d], indptr[d + 1]
+            if a == b:
+                continue
+
+            cols = indices[a:b]
+            vals = data[a:b]
+
+            cl = assign[cols]
+            s_cols = s[cols]
+
+            # On ignore les docs oÃ¹ s=0 (nâ€™influencent pas w)
+            valid = s_cols > eps
+            if not np.any(valid):
+                continue
+
+            cols = cols[valid]
+            vals = vals[valid]
+            cl = cl[valid]
+            s_cols = s_cols[valid]
+
+            # Optimisation : on ne calcule que pour les clusters prÃ©sents dans cette ligne
+            for i in np.unique(cl):
+                mask = (cl == i)
+                weights = s_cols[mask]
+                if weights.size == 0:
+                    continue
+
+                ratios = vals[mask] / weights
+                # poids exact des zÃ©ros (docs du cluster i oÃ¹ le mot d est absent)
+                extra0 = float(sum_s[i] - np.sum(weights))
+                if extra0 > 0:
+                    ratios = np.concatenate([ratios, np.array([0.0])])
+                    weights = np.concatenate([weights, np.array([extra0])])
+
+                w = float(weighted_median(ratios, weights))
+                if enforce_W_nonneg:
+                    w = max(0.0, w)
+                W[d, i] = w
+
+            # Clusters absents => tous x=0 => mÃ©diane = 0 automatiquement (dÃ©jÃ  0)
+
+        return W
+
+    # dense fallback
+    Xd = np.asarray(X, dtype=float)
+    m, _ = Xd.shape
     W = np.zeros((m, k), dtype=float)
 
     for i in range(k):
-        s = H[i, :]
-        mask_j = s > eps
+        mask_j = (assign == i) & (s > eps)
         if not np.any(mask_j):
-            # empty cluster; let caller handle reinit if desired
             continue
         s_sel = s[mask_j]
-        X_sel = X[:, mask_j]  # shape (m, |K_i|)
+        X_sel = Xd[:, mask_j]
 
-        # For each coordinate d, r_j = x_{dj}/s_j with weight s_j
-        # Vectorized pattern: process row by row
         for d in range(m):
-            col = X_sel[d, :]            # shape (|K_i|,)
-            ratios = col / s_sel
-            w_med = weighted_median(ratios, s_sel)
+            col = X_sel[d, :]
+            nz = col != 0
+            weights_nz = s_sel[nz]
+            ratios_nz = col[nz] / weights_nz if np.any(nz) else np.array([], dtype=float)
+
+            extra0 = float(np.sum(s_sel) - np.sum(weights_nz))
+            ratios = ratios_nz
+            weights = weights_nz
+            if extra0 > 0:
+                ratios = np.concatenate([ratios, np.array([0.0])])
+                weights = np.concatenate([weights, np.array([extra0])])
+
+            w = float(weighted_median(ratios, weights)) if weights.size > 0 else 0.0
             if enforce_W_nonneg:
-                w_med = max(0.0, w_med)
-            W[d, i] = w_med
+                w = max(0.0, w)
+            W[d, i] = w
 
     return W
 
@@ -953,7 +1441,7 @@ def update_W_l1(X: np.ndarray,
 
 
 
-===== FILE: C:\ICare\research\l1_ONMF\utils.py =====
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\utils.py =====
 
 import numpy as np
 
@@ -967,17 +1455,35 @@ def split_largest_cluster(H: np.ndarray):
     Kj = np.where(H[k, :] > 0)[0]
     return k, Kj
 
-def ensure_nonempty_clusters(H: np.ndarray, X: np.ndarray):
+def ensure_nonempty_clusters(H: np.ndarray):
     """
-    If a row i of H is all zeros, reassign a few worst-reconstructed points to that cluster.
-    (Simple heuristic; can be replaced by a proper split or reinit.)
+    RÃ©pare H en gardant la contrainte hard-clustering:
+    - 1 seul non-zÃ©ro par colonne
+    - pas de cluster vide
     """
+    H = np.asarray(H, dtype=float).copy()
     k, n = H.shape
-    empties = np.where(np.sum(H > 0, axis=1) == 0)[0]
+
+    # assignment courant (hard)
+    assign = np.argmax(H, axis=0)
+    sizes = np.bincount(assign, minlength=k)
+    empties = np.where(sizes == 0)[0]
+
     for i in empties:
-        # pick a random column to start the cluster
-        j = np.random.randint(0, n)
-        H[i, j] = np.linalg.norm(X[:, j])  # a rough positive scale
+        donor = int(np.argmax(sizes))
+        donor_cols = np.where(assign == donor)[0]
+
+        # on prend la colonne la "moins forte" du donor (scale la plus petite)
+        j = donor_cols[np.argmin(H[donor, donor_cols])]
+
+        # MOVE colonne j vers le cluster vide i
+        H[:, j] = 0.0
+        H[i, j] = 1.0  # valeur arbitraire > 0 ; la normalisation derriÃ¨re fixera lâ€™Ã©chelle
+
+        assign[j] = i
+        sizes[i] += 1
+        sizes[donor] -= 1
+
     return H
 
 

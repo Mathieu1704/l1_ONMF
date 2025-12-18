@@ -44,9 +44,10 @@ def rel_l1_error(X: np.ndarray, W: np.ndarray, H: np.ndarray) -> float:
 
 def alternating_l1_onmf(X: np.ndarray, opts: L1ONMFOptions):
     """
-    Main 2-BCD loop for L1-ONMF with hard clustering induced by H>=0, H H^T = I.
+    Main loop for L1-ONMF with hard clustering induced by H>=0, H H^T = I.
+    Multi-start via opts.n_init (keep best final L1 error).
     """
-    # Convertit les matrices creuses SciPy en dense si besoin
+    # (pour l’instant) densifie si sparse
     if sp is not None and sp.isspmatrix(X):
         X = X.toarray()
     else:
@@ -55,70 +56,86 @@ def alternating_l1_onmf(X: np.ndarray, opts: L1ONMFOptions):
     m, n = X.shape
     r = opts.r
 
-    # --- Init W ---
-    if opts.init == "random":
-        W = init_W_random(X, r, seed=opts.seed, nonneg=opts.enforce_W_nonneg and np.all(X >= 0))
-    elif opts.init == "warm_fro":
-        W = warm_start_from_fro_onmf(X, r, iters=3, seed=opts.seed)
-        if opts.enforce_W_nonneg:
-            W = np.maximum(0.0, W)
-    else:  # auto
-        if np.all(X >= 0):
-            W = init_W_random(X, r, seed=opts.seed, nonneg=True)
-        else:
-            W = warm_start_from_fro_onmf(X, r, iters=3, seed=opts.seed)
+    def _init_W(seed: int | None):
+        if opts.init == "random":
+            W0 = init_W_random(X, r, seed=seed,
+                               nonneg=opts.enforce_W_nonneg and np.all(X >= 0))
+        elif opts.init == "warm_fro":
+            W0 = warm_start_from_fro_onmf(X, r, iters=3, seed=seed)
             if opts.enforce_W_nonneg:
-                W = np.maximum(0.0, W)
+                W0 = np.maximum(0.0, W0)
+        else:  # auto
+            if np.all(X >= 0):
+                W0 = init_W_random(X, r, seed=seed, nonneg=True)
+            else:
+                W0 = warm_start_from_fro_onmf(X, r, iters=3, seed=seed)
+                if opts.enforce_W_nonneg:
+                    W0 = np.maximum(0.0, W0)
+        return W0
 
-    H = np.zeros((r, n), dtype=float)
-    errs = []
-    H_prev = H.copy()
+    def _run_once(seed: int | None):
+        W = _init_W(seed)
 
-    if opts.verbose:
-        print("Starting L1-ONMF: m={}, n={}, r={}, maxiter={}".format(m, n, r, opts.maxiter))
-
-    for it in range(1, opts.maxiter + 1):
-        # --- Erreur au début de l'itération ---
-        err_before = rel_l1_error(X, W, H)
-        if opts.verbose:
-            print(f"\nIter {it:03d} | avant updates : rel L1 err = {err_before:.6f}")
-
-        # --- Update H (assignments + scales) ---
-        H_prev = H.copy()
+        # init H propre (évite un départ H=0 + clusters vides)
         H = update_H_l1(X, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
         H = ensure_nonempty_clusters(H)
         H, W = normalize_rows_H_and_rescale_W(H, W)
-        err_after_H = rel_l1_error(X, W, H)
+
+        errs = []
         if opts.verbose:
-            print(f"Iter {it:03d} | après update_H : rel L1 err = {err_after_H:.6f}")
+            print(f"Starting L1-ONMF: m={m}, n={n}, r={r}, maxiter={opts.maxiter}, seed={seed}")
 
-        # évite les clusters vides
-        H = ensure_nonempty_clusters(H)
+        for it in range(1, opts.maxiter + 1):
+            H_prev = H.copy()
 
-        # --- Normalize rows of H and co-scale W (preserves WH) ---
-        H, W = normalize_rows_H_and_rescale_W(H, W)
-        err_after_norm = rel_l1_error(X, W, H)
-        if opts.verbose:
-            print(f"Iter {it:03d} | après normalize(H,W) : rel L1 err = {err_after_norm:.6f}")
-
-        # --- Update W (coordinate-wise weighted medians) ---
-        W = update_W_l1(X, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-        err_after_W = rel_l1_error(X, W, H)
-        if opts.verbose:
-            print(f"Iter {it:03d} | après update_W : rel L1 err = {err_after_W:.6f}")
-
-        # --- Error / logging global ---
-        if opts.log_errors:
-            errs.append(err_after_W)
             if opts.verbose:
-                print(f"Iter {it:03d} | rel L1 err (log) = {err_after_W:.6f}")
+                err_before = rel_l1_error(X, W, H)
+                print(f"\nIter {it:03d} | début : rel L1 err = {err_before:.6f}")
 
-        # --- stopping sur H (comme avant) ---
-        diff = np.linalg.norm(H - H_prev, ord="fro")
-        if diff < opts.delta and it >= 3:
+            # --- Update H ---
+            H = update_H_l1(X, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
+            H = ensure_nonempty_clusters(H)
+            H, W = normalize_rows_H_and_rescale_W(H, W)
+
             if opts.verbose:
-                print(f"Converged at iter {it} (||H-H_prev||_F={diff:.3e}).")
-            break
+                err_after_H = rel_l1_error(X, W, H)
+                print(f"Iter {it:03d} | après update_H+norm : rel L1 err = {err_after_H:.6f}")
 
+            # --- Update W ---
+            W = update_W_l1(X, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
+            err_after_W = rel_l1_error(X, W, H)
 
-    return W, H, {"rel_l1_errors": np.array(errs), "num_iter": it}
+            if opts.verbose:
+                print(f"Iter {it:03d} | après update_W : rel L1 err = {err_after_W:.6f}")
+
+            if opts.log_errors:
+                errs.append(err_after_W)
+
+            # stopping sur H
+            diff = np.linalg.norm(H - H_prev, ord="fro")
+            if diff < opts.delta and it >= 3:
+                if opts.verbose:
+                    print(f"Converged at iter {it} (||H-H_prev||_F={diff:.3e}).")
+                break
+
+        final_err = errs[-1] if len(errs) else rel_l1_error(X, W, H)
+        info = {"rel_l1_errors": np.array(errs), "num_iter": it, "final_err": float(final_err), "seed": seed}
+        return W, H, info
+
+    # ---- Multi-start ----
+    n_init = max(1, int(getattr(opts, "n_init", 1)))
+    base_seed = 0 if opts.seed is None else int(opts.seed)
+
+    best_W, best_H, best_info = None, None, None
+    best_err = np.inf
+
+    for t in range(n_init):
+        seed_t = base_seed + t
+        Wt, Ht, infot = _run_once(seed_t)
+
+        if infot["final_err"] < best_err:
+            best_err = infot["final_err"]
+            best_W, best_H, best_info = Wt, Ht, infot
+
+    return best_W, best_H, best_info
+

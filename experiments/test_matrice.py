@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # ---------- PARAMÈTRES ----------
-USE_TOY = True          # True pour tester la 10x10, False pour classic.mat
+USE_TOY = False         # True pour tester la 10x10, False pour classic.mat
 DATASET_NAME = "classic.mat"
 MAXITER = 50
 TOL = 1e-6
@@ -107,11 +107,13 @@ def run_on_matrix(X, y_true, r, label: str):
 
 def main():
     if USE_TOY:
-        # ====== CAS MATRICE 10x10 ======
+        # ====== CAS MATRICE  ======
         X, y_true, r, W_true, H_true = make_toy_matrix(m=DIM, n=DIM, r=3, noise=0.05, seed=0)
         print(f">>> Test sur matrice synthétique {DIM}x{DIM}")
         print("W_true et H_true connus (pas nécessaire pour l'algo, mais pour le debug).")
         run_on_matrix(X, y_true, r, label=f"{DIM}x{DIM}")
+        
+
 
     else:
         # ====== CAS classic.mat ======

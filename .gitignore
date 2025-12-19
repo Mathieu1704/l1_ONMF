@@ -6,5 +6,4 @@ venv/
 __pycache__/
 *.pyc
 
-# Fichiers de données CSV
-*.csv
+

@@ -86,23 +86,62 @@ def get_robust_image_dims(n_pixels, dimx, dimy):
     return dimx, dimy, False
 
 def plot_all_signatures(W_dict, dataset_name):
-    """Génère une figure avec les signatures spectrales alignées."""
+    """
+    Génère une figure avec les signatures spectrales alignées.
+    - Styles de lignes distincts (Solid, Dashed...) pour N&B.
+    - Légende sur le côté gauche.
+    - Axe Y fixé à 0, 0.5, 1.
+    """
     n_methods = len(W_dict)
-    fig, axes = plt.subplots(1, n_methods, figsize=(4 * n_methods, 3.5), sharey=True)
+    fig, axes = plt.subplots(1, n_methods, figsize=(4 * n_methods, 3.5), sharey=True, constrained_layout=True)
     if n_methods == 1: axes = [axes]
     
-    for ax, (method_name, W) in zip(axes, W_dict.items()):
-        ax.plot(W)
-        ax.set_title(method_name, fontsize=12, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        if method_name == "Ground Truth":
-            ax.set_ylabel("Reflectance")
+    # Mapping des noms de matériaux (ordre empirique des .mat)
+    # Cela assure que la légende correspond à la bonne courbe
+    material_names = {
+        "Moffet": ["Water", "Soil", "Vegetation"],
+        "Samson": ["Soil", "Water", "Tree"], 
+        "Jasper": ["Tree", "Water", "Soil", "Road"]
+    }
+    
+    # Styles de lignes : Solid, Dashed, Dotted, Dash-dot
+    linestyles = ['-', '--', ':', '-.']
+    
+    # Récupérer les noms pour le dataset actuel
+    current_labels = material_names.get(dataset_name, [f"Mat {k+1}" for k in range(10)])
+
+    for ax_idx, (method_name, W) in enumerate(W_dict.items()):
+        ax = axes[ax_idx]
+        r = W.shape[1]
+        
+        for k in range(r):
+            name_mat = current_labels[k] if k < len(current_labels) else f"Mat {k+1}"
+            style = linestyles[k % len(linestyles)]
             
-    plt.suptitle(f"{dataset_name} - Spectral Signatures", y=1.05)
-    plt.tight_layout()
+            # Trace la courbe
+            ax.plot(W[:, k], linestyle=style, linewidth=2, label=name_mat)
+            
+        ax.set_title(method_name, fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3, linestyle=':')
+        
+        # --- MODIFICATION : FORCER LES TICKS Y A 0, 0.5, 1 ---
+        ax.set_yticks([0, 0.5, 1])
+        ax.set_ylim(-0.05, 1.05) # Légère marge pour voir les courbes à 0 et 1
+        
+        # Gestion Axe Y et Légende (Premier plot seulement)
+        if ax_idx == 0:
+            ax.set_ylabel("Reflectance")
+            # Légende placée à gauche du graph
+            ax.legend(loc='center right', bbox_to_anchor=(-0.27, 0.5), 
+                      fontsize='medium', title=dataset_name, frameon=True)
+        
+        ax.set_xlabel("Bands")
+
+    
     save_path = OUT_DIR / f"{dataset_name}_ALL_Signatures.png"
     plt.savefig(save_path, bbox_inches='tight', dpi=150)
     plt.close()
+    print(f"    -> Figure Signatures sauvegardée : {save_path.name}")
 
 def plot_colored_comparison(H_dict, dimx, dimy, dataset_name):
     """Génère une ligne d'images colorées (Segmentation Map)."""

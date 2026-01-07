@@ -117,3 +117,8 @@ if __name__ == "__main__":
     
     # 3. Cas difficile (Sparse) 
     run_experiment("sparse_docs", m=1000, n=1000, r=4)
+
+
+
+
+

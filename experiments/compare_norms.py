@@ -32,97 +32,72 @@ DATASETS = [
 # Paramètres globaux pour que ce soit rapide mais significatif
 MAX_FEATURES = 5000  # On ne garde que les 5000 mots les plus fréquents (Vital pour la vitesse)
 MAX_ITER = 50        # 50 itérations suffisent pour voir la tendance
-N_INIT = 1           # 1 seul essai pour le tableau (sinon c'est trop long)
+N_INIT_BENCH = 1    
 
-def preprocess_data(X_raw):
-    """Pipeline standardisé pour être juste avec tout le monde."""
-    # 1. TF-IDF
+def preprocess_data_sparse(X_raw):
+    """Reste en format sparse pour la cohérence de la régularisation."""
     tfidf = TfidfTransformer(norm='l1', use_idf=True, smooth_idf=True)
-    X_t = tfidf.fit_transform(X_raw.T)
+    X_t = tfidf.fit_transform(X_raw.T) # X_t est (docs x words) sparse
     
-    # 2. Feature Selection (Top-K)
     if X_t.shape[1] > MAX_FEATURES:
         word_scores = np.asarray(X_t.sum(axis=0)).ravel()
         idx = np.argsort(word_scores)[-MAX_FEATURES:]
         X_t = X_t[:, idx]
     
-    # 3. Transpose (m x n) et Normalisation L1
-    X = X_t.T
-    X = normalize(X, norm='l1', axis=0)
-    
-    # Conversion Dense pour simplifier les algos (avec 5000 feats ça passe en RAM)
-    return X.toarray()
+    X = X_t.T # (words x docs)
+    X = normalize(X, norm='l1', axis=0) # Reste sparse
+    return X # Retourne une matrice scipy sparse
 
 def run_dataset(filename):
     path = DATA_DIR / filename
     print(f"\n>>> Traitement de {filename}...")
     
-    # 1. Chargement
     try:
         X_raw, y_true, r = load_doc_mat(str(path))
+        X = preprocess_data_sparse(X_raw)
+        m, n = X.shape
+        print(f"    Data Sparse: {m} features, {n} docs, k={r}")
     except Exception as e:
-        print(f"    [SKIP] Erreur chargement: {e}")
+        print(f"    [SKIP] Erreur: {e}")
         return None
 
-    m_orig, n = X_raw.shape
-    
-    # 2. Preprocessing
-    try:
-        X = preprocess_data(X_raw)
-        m = X.shape[0]
-        print(f"    Data: m={m} (was {m_orig}), n={n}, k={r}")
-    except Exception as e:
-        print(f"    [SKIP] Erreur preprocessing: {e}")
-        return None
-
-    res = {
-        "dataset": filename, "m": m, "n": n, "r": r,
-        "acc_L1": 0, "time_L1": 0, "it_L1": 0,
-        "acc_KL": 0, "time_KL": 0, "it_KL": 0,
-        "acc_Fro": 0, "time_Fro": 0, "it_Fro": 0
-    }
+    res = {"dataset": filename, "m": m, "n": n, "r": r}
 
     # --- ALGO 1: L1-ONMF (Nous) ---
+    # On force n_init=1 pour être équitable avec les autres
     print("    Running L1-ONMF...", end="", flush=True)
     try:
         t0 = time.time()
-        opts = L1ONMFOptions(r=r, maxiter=MAX_ITER, init="kmeans", verbose=False, enforce_W_nonneg=True)
+        opts = L1ONMFOptions(r=r, maxiter=MAX_ITER, init="kmeans", n_init=N_INIT_BENCH, verbose=False, enforce_W_nonneg=True)
         _, H_l1, info = alternating_l1_onmf(X, opts)
         acc = clustering_accuracy_hungarian(y_true, np.argmax(H_l1, axis=0)+1)
-        res["acc_L1"] = acc * 100
-        res["time_L1"] = time.time() - t0
-        res["it_L1"] = info["num_iter"]
+        res["acc_L1"], res["time_L1"], res["it_L1"] = acc*100, time.time()-t0, info["num_iter"]
         print(f" Done ({acc*100:.1f}%)")
-    except Exception as e:
-        print(f" Failed ({e})")
+    except Exception as e: print(f" Failed ({e})")
 
     # --- ALGO 2: KL-ONMF (Prof) ---
+    # Note: On doit souvent densifier pour le code du prof s'il n'est pas optimisé sparse
     print("    Running KL-ONMF...", end="", flush=True)
     try:
         t0 = time.time()
-        # On utilise notre portage Python exact
-        _, H_kl, _ = alternating_kl_onmf(X, r=r, maxiter=MAX_ITER, init="kmeans", seed=42)
+        # On passe X.toarray() ici seulement car le code KL du prof n'aime pas le sparse
+        _, H_kl, _ = alternating_kl_onmf(X.toarray(), r=r, maxiter=MAX_ITER, init="kmeans", seed=42)
         acc = clustering_accuracy_hungarian(y_true, np.argmax(H_kl, axis=0)+1)
-        res["acc_KL"] = acc * 100
-        res["time_KL"] = time.time() - t0
-        res["it_KL"] = MAX_ITER # Le portage simple fait maxiter fixe
+        res["acc_KL"], res["time_KL"], res["it_KL"] = acc*100, time.time()-t0, MAX_ITER
         print(f" Done ({acc*100:.1f}%)")
-    except Exception as e:
-        print(f" Failed ({e})")
+    except Exception as e: print(f" Failed ({e})")
 
-    # --- ALGO 3: Fro-ONMF (Proxy K-Means) ---
-    print("    Running Fro-ONMF (KMeans)...", end="", flush=True)
+    # --- ALGO 3: Fro-ONMF (KMeans) ---
+    print("    Running Fro-ONMF...", end="", flush=True)
     try:
         t0 = time.time()
-        kmeans = KMeans(n_clusters=r, n_init=5, max_iter=MAX_ITER, random_state=42)
+        # KMeans de sklearn gère très bien les matrices sparse en entrée
+        kmeans = KMeans(n_clusters=r, n_init=N_INIT_BENCH, max_iter=MAX_ITER, random_state=42)
         y_pred = kmeans.fit_predict(X.T) + 1
         acc = clustering_accuracy_hungarian(y_true, y_pred)
-        res["acc_Fro"] = acc * 100
-        res["time_Fro"] = time.time() - t0
-        res["it_Fro"] = kmeans.n_iter_
+        res["acc_Fro"], res["time_Fro"], res["it_Fro"] = acc*100, time.time()-t0, kmeans.n_iter_
         print(f" Done ({acc*100:.1f}%)")
-    except Exception as e:
-        print(f" Failed ({e})")
+    except Exception as e: print(f" Failed ({e})")
 
     return res
 

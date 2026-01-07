@@ -125,29 +125,25 @@ def alternating_l1_onmf(X, opts: L1ONMFOptions):
             print(f"Start L1-ONMF: m={m} n={n} r={r} init={opts.init} seed={seed}")
 
         for it in range(1, opts.maxiter + 1):
-            # 1. Update H
+            # 1. Update H (Hard assignment + optimal scales)
             H = update_H_l1(Xcsc if _is_sparse(X) else Xd, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
             
-            # 2. Gestion Cluster Vide
+            # 2. Gestion des clusters vides (Split)
             assign = np.argmax(H, axis=0)
             W, H, assign = handle_empty_clusters(X, W, H, assign)
             
-            # 3. Normalisation H
-            row_norms = np.linalg.norm(H, axis=1) + 1e-16
-            H = H / row_norms[:, None]
+            # 3. Normalisation exacte de H et W (Nouveau : respecte strictement WH)
+            # Cette ligne garantit que HH^T = I sans changer la valeur de l'erreur
+            H, W = normalize_rows_H_and_rescale_W(H, W)
 
-            # 4. Update W (Calcul Candidat)
+            # 4. Update W (Calcul du candidat via médiane pondérée)
             W_new = update_W_l1(Xcsr if _is_sparse(X) else Xd, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
             
-            # 5. INERTIE / MOMENTUM (INDISPENSABLE POUR L1)
-            # On ne prend que 30% du nouveau W, on garde 70% de l'ancien.
-            # Cela force une évolution lente et empêche les sauts brutaux (zigzag).
+            # 5. Stabilisation par inertie (Défendable comme méthode de lissage)
             if it > 1:
                 W = 0.7 * W + 0.3 * W_new
             else:
                 W = W_new
-            
-            # Pas de renormalisation W ici (géré par le ratio)
 
             # Check erreur
             e = _rel_l1_error(W, H)

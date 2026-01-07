@@ -127,97 +127,72 @@ DATASETS = [
 # ParamÃ¨tres globaux pour que ce soit rapide mais significatif
 MAX_FEATURES = 5000  # On ne garde que les 5000 mots les plus frÃ©quents (Vital pour la vitesse)
 MAX_ITER = 50        # 50 itÃ©rations suffisent pour voir la tendance
-N_INIT = 1           # 1 seul essai pour le tableau (sinon c'est trop long)
+N_INIT_BENCH = 1    
 
-def preprocess_data(X_raw):
-    """Pipeline standardisÃ© pour Ãªtre juste avec tout le monde."""
-    # 1. TF-IDF
+def preprocess_data_sparse(X_raw):
+    """Reste en format sparse pour la cohÃ©rence de la rÃ©gularisation."""
     tfidf = TfidfTransformer(norm='l1', use_idf=True, smooth_idf=True)
-    X_t = tfidf.fit_transform(X_raw.T)
+    X_t = tfidf.fit_transform(X_raw.T) # X_t est (docs x words) sparse
     
-    # 2. Feature Selection (Top-K)
     if X_t.shape[1] > MAX_FEATURES:
         word_scores = np.asarray(X_t.sum(axis=0)).ravel()
         idx = np.argsort(word_scores)[-MAX_FEATURES:]
         X_t = X_t[:, idx]
     
-    # 3. Transpose (m x n) et Normalisation L1
-    X = X_t.T
-    X = normalize(X, norm='l1', axis=0)
-    
-    # Conversion Dense pour simplifier les algos (avec 5000 feats Ã§a passe en RAM)
-    return X.toarray()
+    X = X_t.T # (words x docs)
+    X = normalize(X, norm='l1', axis=0) # Reste sparse
+    return X # Retourne une matrice scipy sparse
 
 def run_dataset(filename):
     path = DATA_DIR / filename
     print(f"\n>>> Traitement de {filename}...")
     
-    # 1. Chargement
     try:
         X_raw, y_true, r = load_doc_mat(str(path))
+        X = preprocess_data_sparse(X_raw)
+        m, n = X.shape
+        print(f"    Data Sparse: {m} features, {n} docs, k={r}")
     except Exception as e:
-        print(f"    [SKIP] Erreur chargement: {e}")
+        print(f"    [SKIP] Erreur: {e}")
         return None
 
-    m_orig, n = X_raw.shape
-    
-    # 2. Preprocessing
-    try:
-        X = preprocess_data(X_raw)
-        m = X.shape[0]
-        print(f"    Data: m={m} (was {m_orig}), n={n}, k={r}")
-    except Exception as e:
-        print(f"    [SKIP] Erreur preprocessing: {e}")
-        return None
-
-    res = {
-        "dataset": filename, "m": m, "n": n, "r": r,
-        "acc_L1": 0, "time_L1": 0, "it_L1": 0,
-        "acc_KL": 0, "time_KL": 0, "it_KL": 0,
-        "acc_Fro": 0, "time_Fro": 0, "it_Fro": 0
-    }
+    res = {"dataset": filename, "m": m, "n": n, "r": r}
 
     # --- ALGO 1: L1-ONMF (Nous) ---
+    # On force n_init=1 pour Ãªtre Ã©quitable avec les autres
     print("    Running L1-ONMF...", end="", flush=True)
     try:
         t0 = time.time()
-        opts = L1ONMFOptions(r=r, maxiter=MAX_ITER, init="kmeans", verbose=False, enforce_W_nonneg=True)
+        opts = L1ONMFOptions(r=r, maxiter=MAX_ITER, init="kmeans", n_init=N_INIT_BENCH, verbose=False, enforce_W_nonneg=True)
         _, H_l1, info = alternating_l1_onmf(X, opts)
         acc = clustering_accuracy_hungarian(y_true, np.argmax(H_l1, axis=0)+1)
-        res["acc_L1"] = acc * 100
-        res["time_L1"] = time.time() - t0
-        res["it_L1"] = info["num_iter"]
+        res["acc_L1"], res["time_L1"], res["it_L1"] = acc*100, time.time()-t0, info["num_iter"]
         print(f" Done ({acc*100:.1f}%)")
-    except Exception as e:
-        print(f" Failed ({e})")
+    except Exception as e: print(f" Failed ({e})")
 
     # --- ALGO 2: KL-ONMF (Prof) ---
+    # Note: On doit souvent densifier pour le code du prof s'il n'est pas optimisÃ© sparse
     print("    Running KL-ONMF...", end="", flush=True)
     try:
         t0 = time.time()
-        # On utilise notre portage Python exact
-        _, H_kl, _ = alternating_kl_onmf(X, r=r, maxiter=MAX_ITER, init="kmeans", seed=42)
+        # On passe X.toarray() ici seulement car le code KL du prof n'aime pas le sparse
+        _, H_kl, _ = alternating_kl_onmf(X.toarray(), r=r, maxiter=MAX_ITER, init="kmeans", seed=42)
         acc = clustering_accuracy_hungarian(y_true, np.argmax(H_kl, axis=0)+1)
-        res["acc_KL"] = acc * 100
-        res["time_KL"] = time.time() - t0
-        res["it_KL"] = MAX_ITER # Le portage simple fait maxiter fixe
+        res["acc_KL"], res["time_KL"], res["it_KL"] = acc*100, time.time()-t0, MAX_ITER
         print(f" Done ({acc*100:.1f}%)")
-    except Exception as e:
-        print(f" Failed ({e})")
+    except Exception as e: print(f" Failed ({e})")
 
-    # --- ALGO 3: Fro-ONMF (Proxy K-Means) ---
-    print("    Running Fro-ONMF (KMeans)...", end="", flush=True)
+    # --- ALGO 3: Fro-ONMF (KMeans) ---
+    print("    Running Fro-ONMF...", end="", flush=True)
     try:
         t0 = time.time()
-        kmeans = KMeans(n_clusters=r, n_init=5, max_iter=MAX_ITER, random_state=42)
+        # KMeans de sklearn gÃ¨re trÃ¨s bien les matrices sparse en entrÃ©e
+        kmeans = KMeans(n_clusters=r, n_init=N_INIT_BENCH, max_iter=MAX_ITER, random_state=42)
         y_pred = kmeans.fit_predict(X.T) + 1
         acc = clustering_accuracy_hungarian(y_true, y_pred)
-        res["acc_Fro"] = acc * 100
-        res["time_Fro"] = time.time() - t0
-        res["it_Fro"] = kmeans.n_iter_
+        res["acc_Fro"], res["time_Fro"], res["it_Fro"] = acc*100, time.time()-t0, kmeans.n_iter_
         print(f" Done ({acc*100:.1f}%)")
-    except Exception as e:
-        print(f" Failed ({e})")
+    except Exception as e: print(f" Failed ({e})")
 
     return res
 
@@ -393,6 +368,7 @@ if __name__ == "__main__":
 # experiments/hsi_experiments.py
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import time
 import csv
 import sys
@@ -415,14 +391,14 @@ OUT_DIR = Path(__file__).resolve().parent / "plots" / "hsi"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 OUT_CSV = "table_hsi_results.csv"
 
-DATASETS = ["Moffet", "Samson", "Jasper"] 
+DATASETS = ["Moffet", "Samson", "Jasper"]
 
 # ==========================================
-# OUTILS METRIQUES & PLOTS COMBINÃ‰S
+# 1. OUTILS MATHÃ‰MATIQUES (MRSA & SCALING)
 # ==========================================
 
 def compute_mrsa(x, y):
-    """Mean Removed Spectral Angle"""
+    """Calcule le Mean Removed Spectral Angle entre deux vecteurs."""
     x_c = x - np.mean(x)
     y_c = y - np.mean(y)
     nom = np.dot(x_c, y_c)
@@ -431,8 +407,12 @@ def compute_mrsa(x, y):
     return (100 / np.pi) * np.arccos(val)
 
 def match_and_score_mrsa(W_true, W_pred):
-    """Alignement Hongrois"""
+    """
+    Trouve la meilleure permutation des colonnes de W_pred pour coller Ã  W_true.
+    Retourne: score MRSA moyen, W_pred permutÃ©, indices de permutation
+    """
     if W_true is None: return 0.0, W_pred, np.arange(W_pred.shape[1])
+    
     r = W_true.shape[1]
     if W_pred.shape[1] != r: return 99.9, W_pred, np.arange(W_pred.shape[1])
 
@@ -442,115 +422,169 @@ def match_and_score_mrsa(W_true, W_pred):
             cost_mat[i, j] = compute_mrsa(W_true[:, i], W_pred[:, j])
             
     row_ind, col_ind = linear_sum_assignment(cost_mat)
-    return cost_mat[row_ind, col_ind].mean(), W_pred[:, col_ind], col_ind
+    
+    W_aligned = W_pred[:, col_ind]
+    avg_mrsa = cost_mat[row_ind, col_ind].mean()
+    
+    return avg_mrsa, W_aligned, col_ind
 
 def scale_W_to_GroundTruth(W_pred, W_true):
     """
-    Recale les amplitudes de W_pred sur celles de W_true (comme le prof).
-    W_pred(:, k) = W_pred(:, k) / max(W_pred) * max(W_true)
+    Ajuste l'amplitude de W_pred sur celle de W_true pour que les plots soient superposables.
     """
     if W_true is None: return W_pred
-    
     W_scaled = W_pred.copy()
     r = W_pred.shape[1]
-    
     for k in range(r):
         max_pred = np.max(W_pred[:, k]) + 1e-16
         max_true = np.max(W_true[:, k])
         W_scaled[:, k] = (W_pred[:, k] / max_pred) * max_true
-        
     return W_scaled
+
+# ==========================================
+# 2. FONCTIONS DE PLOT (Signatures, Color, N&B)
+# ==========================================
+
+def get_robust_image_dims(n_pixels, dimx, dimy):
+    """Calcul sÃ©curisÃ© des dimensions de l'image (Safety Net)."""
+    if dimx is None or dimy is None or dimx * dimy != n_pixels:
+        side = int(np.sqrt(n_pixels))
+        return side, side, True # True = a Ã©tÃ© forcÃ©/tronquÃ©
+    return dimx, dimy, False
 
 def plot_all_signatures(W_dict, dataset_name):
     """
-    CrÃ©e une figure avec 1 ligne et N colonnes (GT, Fro, KL, L1).
+    GÃ©nÃ¨re une figure avec les signatures spectrales alignÃ©es.
+    - Styles de lignes distincts (Solid, Dashed...) pour N&B.
+    - LÃ©gende sur le cÃ´tÃ© gauche.
+    - Axe Y fixÃ© Ã  0, 0.5, 1.
     """
     n_methods = len(W_dict)
-    fig, axes = plt.subplots(1, n_methods, figsize=(4 * n_methods, 3.5), sharey=True)
+    fig, axes = plt.subplots(1, n_methods, figsize=(4 * n_methods, 3.5), sharey=True, constrained_layout=True)
     if n_methods == 1: axes = [axes]
     
-    for ax, (method_name, W) in zip(axes, W_dict.items()):
-        ax.plot(W)
-        ax.set_title(method_name)
-        ax.grid(True, alpha=0.3)
-        if method_name == "Ground Truth":
-            ax.set_ylabel("Reflectance")
-            
-    plt.suptitle(f"{dataset_name} - Spectral Signatures", y=1.02)
-    plt.tight_layout()
-    save_path = OUT_DIR / f"{dataset_name}_ALL_Signatures.png"
-    plt.savefig(save_path, bbox_inches='tight')
-    plt.close()
-    print(f"    -> Figure sauvegardÃ©e : {save_path.name}")
+    # Mapping des noms de matÃ©riaux (ordre empirique des .mat)
+    # Cela assure que la lÃ©gende correspond Ã  la bonne courbe
+    material_names = {
+        "Moffet": ["Water", "Soil", "Vegetation"],
+        "Samson": ["Soil", "Water", "Tree"], 
+        "Jasper": ["Tree", "Water", "Soil", "Road"]
+    }
+    
+    # Styles de lignes : Solid, Dashed, Dotted, Dash-dot
+    linestyles = ['-', '--', ':', '-.']
+    
+    # RÃ©cupÃ©rer les noms pour le dataset actuel
+    current_labels = material_names.get(dataset_name, [f"Mat {k+1}" for k in range(10)])
 
-def plot_decomposition_maps(H_dict, dimx, dimy, dataset_name):
-    """
-    CrÃ©e une figure de type 'Planched contact' comme dans le papier.
-    Lignes : MÃ©thodes (GT, Fro, KL, L1)
-    Colonnes : MatÃ©riaux (r clusters)
-    """
+    for ax_idx, (method_name, W) in enumerate(W_dict.items()):
+        ax = axes[ax_idx]
+        r = W.shape[1]
+        
+        for k in range(r):
+            name_mat = current_labels[k] if k < len(current_labels) else f"Mat {k+1}"
+            style = linestyles[k % len(linestyles)]
+            
+            # Trace la courbe
+            ax.plot(W[:, k], linestyle=style, linewidth=2, label=name_mat)
+            
+        ax.set_title(method_name, fontsize=12, fontweight='bold')
+        ax.grid(True, alpha=0.3, linestyle=':')
+        
+        # --- MODIFICATION : FORCER LES TICKS Y A 0, 0.5, 1 ---
+        ax.set_yticks([0, 0.5, 1])
+        ax.set_ylim(-0.05, 1.05) # LÃ©gÃ¨re marge pour voir les courbes Ã  0 et 1
+        
+        # Gestion Axe Y et LÃ©gende (Premier plot seulement)
+        if ax_idx == 0:
+            ax.set_ylabel("Reflectance")
+            # LÃ©gende placÃ©e Ã  gauche du graph
+            ax.legend(loc='center right', bbox_to_anchor=(-0.27, 0.5), 
+                      fontsize='medium', title=dataset_name, frameon=True)
+        
+        ax.set_xlabel("Bands")
+
+    
+    save_path = OUT_DIR / f"{dataset_name}_ALL_Signatures.png"
+    plt.savefig(save_path, bbox_inches='tight', dpi=150)
+    plt.close()
+    print(f"    -> Figure Signatures sauvegardÃ©e : {save_path.name}")
+
+def plot_colored_comparison(H_dict, dimx, dimy, dataset_name):
+    """GÃ©nÃ¨re une ligne d'images colorÃ©es (Segmentation Map)."""
     methods = list(H_dict.keys())
     n_methods = len(methods)
     
-    # On suppose que tous les H ont le mÃªme r (nombre de clusters)
+    fig, axes = plt.subplots(1, n_methods, figsize=(3 * n_methods, 3.5), constrained_layout=True)
+    if n_methods == 1: axes = [axes]
+    
+    # Palette fixe pour cohÃ©rence entre mÃ©thodes
+    r = H_dict[methods[0]].shape[0]
+    colors = ['#1f77b4', '#2ca02c', '#8c564b', '#7f7f7f', '#d62728', '#17becf']
+    cmap = ListedColormap(colors[:r]) if r <= len(colors) else 'tab10'
+
+    for ax, (method_name, H) in zip(axes, H_dict.items()):
+        labels = np.argmax(H, axis=0)
+        final_dimx, final_dimy, truncated = get_robust_image_dims(labels.size, dimx, dimy)
+        if truncated: labels = labels[:final_dimx*final_dimy]
+
+        try:
+            img = labels.reshape((final_dimy, final_dimx), order='F')
+        except:
+            img = labels.reshape((final_dimy, final_dimx), order='C')
+            
+        ax.imshow(img, cmap=cmap, interpolation='nearest')
+        ax.set_title(method_name, fontsize=12, fontweight='bold')
+        ax.axis('off')
+        
+        # Cadre noir
+        for spine in ax.spines.values():
+            spine.set_visible(True); spine.set_edgecolor('black'); spine.set_linewidth(1.5)
+
+    plt.suptitle(f"{dataset_name} - Segmentation", y=1.05)
+    plt.savefig(OUT_DIR / f"{dataset_name}_Colored_Maps.png", bbox_inches='tight', dpi=150)
+    plt.close()
+
+def plot_decomposition_maps(H_dict, dimx, dimy, dataset_name):
+    """GÃ©nÃ¨re la grille N&B dÃ©composÃ©e par matÃ©riau (Comme Fig 2 du papier)."""
+    methods = list(H_dict.keys())
+    n_methods = len(methods)
     r = H_dict[methods[0]].shape[0]
     
-    # Configuration de la figure : (Lignes x Colonnes)
-    fig, axes = plt.subplots(n_methods, r, figsize=(3 * r, 3 * n_methods), constrained_layout=True)
-    
-    # Cas particulier si r=1 ou n_methods=1 (axes n'est pas une grille 2D)
-    if n_methods == 1 and r == 1: axes = np.array([[axes]])
-    elif n_methods == 1: axes = axes[None, :]
-    elif r == 1: axes = axes[:, None]
+    fig, axes = plt.subplots(n_methods, r, figsize=(2.5 * r, 2.5 * n_methods), constrained_layout=True)
+    if n_methods == 1: axes = axes[None, :]
+    if r == 1: axes = axes[:, None]
 
     for row_idx, (method_name, H) in enumerate(H_dict.items()):
-        # H est de taille (r, n_pixels)
-        # On veut r images binaires
-        
-        # Identification du cluster majoritaire pour chaque pixel (Hard Clustering)
-        labels = np.argmax(H, axis=0) # (n,)
-        n_pixels = labels.size
+        labels = np.argmax(H, axis=0)
+        final_dimx, final_dimy, truncated = get_robust_image_dims(labels.size, dimx, dimy)
+        if truncated: labels = labels[:final_dimx*final_dimy]
 
-        # --- Gestion des dimensions (Safety Net) ---
-        final_dimx, final_dimy = dimx, dimy
-        if dimx is None or dimy is None or dimx * dimy != n_pixels:
-            side = int(np.sqrt(n_pixels))
-            final_dimx, final_dimy = side, side
-            labels = labels[:side*side] # Truncature si besoin
-
-        # Boucle sur les matÃ©riaux (colonnes)
         for k in range(r):
             ax = axes[row_idx, k]
-            
-            # CrÃ©ation du masque binaire pour le matÃ©riau k
-            # 1 si le pixel appartient au cluster k, 0 sinon
             binary_map = (labels == k).astype(int)
             
-            # Reshape en 2D
             try:
                 img = binary_map.reshape((final_dimy, final_dimx), order='F')
             except:
                 img = binary_map.reshape((final_dimy, final_dimx), order='C')
             
-            # Affichage en Niveaux de gris inversÃ©s (0=Blanc, 1=Noir/Gris) comme le papier
-            ax.imshow(img, cmap='Greys', vmin=0, vmax=1.2) # vmax>1 pour que le noir ne soit pas trop profond si voulu
-            ax.axis('off')
+            # 0=Blanc, 1=Noir
+            ax.imshow(img, cmap='Greys', interpolation='nearest', vmin=0, vmax=1.2)
+            ax.set_xticks([]); ax.set_yticks([])
             
-            # Titres
-            if row_idx == 0:
-                ax.set_title(f"Material {k+1}", fontsize=10)
-            if k == 0:
-                ax.text(-0.2, 0.5, method_name, va='center', ha='right', transform=ax.transAxes, fontsize=12, fontweight='bold')
+            # Cadre fin
+            for spine in ax.spines.values():
+                spine.set_visible(True); spine.set_edgecolor('black'); spine.set_linewidth(0.8)
 
-    plt.suptitle(f"{dataset_name} - Material Decomposition", fontsize=14)
-    
-    save_path = OUT_DIR / f"{dataset_name}_Decomposition.png"
-    plt.savefig(save_path, dpi=150)
+            if row_idx == 0: ax.set_title(f"Material {k+1}", fontsize=10)
+            if k == 0: ax.set_ylabel(method_name, fontsize=11, fontweight='bold')
+
+    plt.savefig(OUT_DIR / f"{dataset_name}_Decomposition.png", bbox_inches='tight', dpi=150)
     plt.close()
-    print(f"    -> Figure dÃ©composÃ©e sauvegardÃ©e : {save_path.name}")
 
 # ==========================================
-# MOTEUR PRINCIPAL
+# 3. MOTEUR PRINCIPAL (BENCHMARK)
 # ==========================================
 
 def run_hsi_bench():
@@ -565,19 +599,23 @@ def run_hsi_bench():
             
         print(f">>> Traitement de {name}...")
         
-        # 1. Chargement
+        # 1. Chargement & Robustesse
         try:
             X, r, W_true, dimx, dimy = load_hsi_mat(str(mat_path))
+            
+            # Force r si manquant
             if r is None:
                 r = 3 if name in ["Moffet", "Samson"] else 4
                 print(f"    (Warning: r forcÃ© Ã  {r})")
             
+            # --- CORRECTION FINALE : PAS DE NORMALISATION DU GROUND TRUTH ---
+            # On laisse le Ground Truth "brut". 
+            # Comme Ã§a, l'eau restera sombre (valeurs faibles) et ne sera pas Ã©tirÃ©e Ã  1.
+            # Seuls les W nÃ©gatifs sont clippÃ©s Ã  0 par sÃ©curitÃ©.
             if W_true is not None:
-                # Normalisation GT
                 W_true = np.maximum(0, W_true)
-                norms = np.max(W_true, axis=0, keepdims=True)
-                norms[norms==0] = 1
-                W_true = W_true / norms
+                # SUPPRIMÃ‰ : W_true = W_true / norms (C'Ã©tait la cause du bug)
+                
         except Exception as e:
             print(f"    Erreur chargement: {e}")
             continue
@@ -587,28 +625,19 @@ def run_hsi_bench():
         W_store = {}
         H_store = {}
         
-        # --- CALCUL DU GROUND TRUTH H (Assignment) ---
+        # 2. Construction Ground Truth H (via Cosine Similarity)
         if W_true is not None:
             W_store["Ground Truth"] = W_true
             
-            # On projette X sur W_true pour trouver quel pixel correspond Ã  quel matÃ©riau
-            # MÃ©thode simple : Cosine Similarity (Dot product sur vecteurs normalisÃ©s)
-            # H_true_indices = argmax(W_true^T . X)
-            
-            # Normalisation L2 pour cosine similarity
             W_n = W_true / (np.linalg.norm(W_true, axis=0, keepdims=True) + 1e-16)
             X_n = X / (np.linalg.norm(X, axis=0, keepdims=True) + 1e-16)
-            similarity = W_n.T @ X_n
-            labels_gt = np.argmax(similarity, axis=0)
+            labels_gt = np.argmax(W_n.T @ X_n, axis=0)
             
-            # Reconstruction matrice H (r x n)
             H_true = np.zeros((r, X.shape[1]))
-            for i in range(X.shape[1]):
-                H_true[labels_gt[i], i] = 1.0
-            
+            for i in range(X.shape[1]): H_true[labels_gt[i], i] = 1.0
             H_store["Ground Truth"] = H_true
 
-        # --- ALGO 1: Fro-ONMF (K-Means) ---
+        # 3. Fro-ONMF (K-Means)
         t0 = time.time()
         kmeans = KMeans(n_clusters=r, n_init=5, max_iter=100, random_state=42)
         labels_fro = kmeans.fit_predict(X.T)
@@ -618,41 +647,30 @@ def run_hsi_bench():
         for i in range(X.shape[1]): H_fro[labels_fro[i], i] = 1
         W_fro = kmeans.cluster_centers_.T
         
-        score_fro, W_fro_aligned, _ = match_and_score_mrsa(W_true, W_fro)
+        score_fro, W_fro_aligned, col_ind_fro = match_and_score_mrsa(W_true, W_fro)
         W_fro_scaled = scale_W_to_GroundTruth(W_fro_aligned, W_true)
         
         W_store["Fro-ONMF"] = W_fro_scaled
-        H_store["Fro-ONMF"] = H_fro # Note: H_fro n'est pas rÃ©ordonnÃ© ici, attention !
-        # CORRECTION IMPORTANTE: Il faut rÃ©ordonner les lignes de H pour qu'elles matchent GT
-        # match_and_score_mrsa nous donne l'ordre pour W, il faut l'appliquer Ã  H.
-        # Recalculons l'ordre proprement:
-        _, _, col_ind_fro = match_and_score_mrsa(W_true, W_fro)
-        # On applique la permutation aux lignes de H_fro
-        # Attention: H_fro a Ã©tÃ© construit sur labels_fro qui correspondent Ã  W_fro non-alignÃ©.
-        # Donc si on permute W, on doit permuter H de la mÃªme faÃ§on.
-        # H_fro_aligned[new_k, :] = H_fro[old_k, :]
-        H_fro_aligned = H_fro[col_ind_fro, :]
-        H_store["Fro-ONMF"] = H_fro_aligned
-        
+        H_store["Fro-ONMF"] = H_fro[col_ind_fro, :] # Alignement H
         res["MRSA_Fro"] = score_fro
-        print(f"    [Fro] MRSA: {score_fro:.2f}")
+        print(f"    [Fro] MRSA: {score_fro:.2f} | Time: {t_fro:.2f}s")
 
-        # --- ALGO 2: KL-ONMF ---
+        # 4. KL-ONMF
         t0 = time.time()
-        W_kl_raw, H_kl_raw, _ = alternating_kl_onmf(X, r, maxiter=100, init="kmeans", seed=42)
+        W_kl_raw, H_kl_raw, _ = alternating_kl_onmf(X, r, maxiter=50, init="kmeans", seed=42)
         t_kl = time.time() - t0
         
         score_kl, W_kl_aligned, col_ind_kl = match_and_score_mrsa(W_true, W_kl_raw)
         W_kl_scaled = scale_W_to_GroundTruth(W_kl_aligned, W_true)
         
         W_store["KL-ONMF"] = W_kl_scaled
-        H_store["KL-ONMF"] = H_kl_raw[col_ind_kl, :] 
+        H_store["KL-ONMF"] = H_kl_raw[col_ind_kl, :]
         res["MRSA_KL"] = score_kl
-        print(f"    [KL ] MRSA: {score_kl:.2f}")
+        print(f"    [KL ] MRSA: {score_kl:.2f} | Time: {t_kl:.2f}s")
 
-        # --- ALGO 3: L1-ONMF (Nous) ---
+        # 5. L1-ONMF (Nous)
         t0 = time.time()
-        opts = L1ONMFOptions(r=r, maxiter=100, init="kmeans", verbose=False, enforce_W_nonneg=True)
+        opts = L1ONMFOptions(r=r, maxiter=50, init="kmeans", verbose=False, enforce_W_nonneg=True)
         W_l1_raw, H_l1_raw, info_l1 = alternating_l1_onmf(X, opts)
         t_l1 = time.time() - t0
         
@@ -660,19 +678,19 @@ def run_hsi_bench():
         W_l1_scaled = scale_W_to_GroundTruth(W_l1_aligned, W_true)
         
         W_store["L1-ONMF"] = W_l1_scaled
-        H_store["L1-ONMF"] = H_l1_raw[col_ind_l1, :] 
+        H_store["L1-ONMF"] = H_l1_raw[col_ind_l1, :]
         res["MRSA_L1"] = score_l1
-        print(f"    [L1 ] MRSA: {score_l1:.2f}")
-        
-        # --- GENERATION DES PLOTS ---
-        # 1. Signatures
-        plot_all_signatures(W_store, name)
-        
-        # 2. DÃ©composition Maps (La demande actuelle)
-        plot_decomposition_maps(H_store, dimx, dimy, name)
+        print(f"    [L1 ] MRSA: {score_l1:.2f} | Time: {t_l1:.2f}s")
         
         results.append(res)
+        
+        # 6. Plots
+        plot_all_signatures(W_store, name)
+        plot_colored_comparison(H_store, dimx, dimy, name)
+        plot_decomposition_maps(H_store, dimx, dimy, name)
+        print(f"    -> Images sauvegardÃ©es dans {OUT_DIR}")
 
+    # 7. Sauvegarde CSV
     if results:
         headers = ["dataset", "m", "n", "r", "MRSA_Fro", "MRSA_KL", "MRSA_L1"]
         with open(OUT_CSV, "w", newline="") as f:
@@ -684,6 +702,89 @@ def run_hsi_bench():
 
 if __name__ == "__main__":
     run_hsi_bench()
+
+
+
+
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\plot.py =====
+
+# experiments/plot_doc_results.py
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+import sys
+
+# --- CONFIGURATION ---
+CSV_FILE = Path(__file__).parent / "table_comparative_real_docs.csv"
+OUT_DIR = Path(__file__).parent / "plots" / "docs"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+def plot_results():
+    if not CSV_FILE.exists():
+        print(f"Erreur: Le fichier {CSV_FILE} n'existe pas.")
+        return
+
+    # Chargement des donnÃ©es
+    df = pd.read_csv(CSV_FILE)
+    
+    # Tri par taille de dataset (n) pour la lisibilitÃ©
+    df = df.sort_values('n')
+    
+    datasets = df['dataset'].str.replace('.mat', '', regex=False)
+    x = np.arange(len(datasets))
+    width = 0.25
+
+    # ==========================================
+    # PLOT 1: ACCURACY COMPARISON
+    # ==========================================
+    plt.figure(figsize=(14, 7))
+    
+    # Barres
+    plt.bar(x - width, df['acc_L1'], width, label='L1-ONMF', color='#d62728', alpha=0.8)
+    plt.bar(x, df['acc_Fro'], width, label='Fro-ONMF', color='#1f77b4', alpha=0.8)
+    plt.bar(x + width, df['acc_KL'], width, label='KL-ONMF', color='#2ca02c', alpha=0.8)
+    
+    # EsthÃ©tique
+    plt.ylabel('Accuracy (%)', fontsize=12)
+    plt.title('Comparaison de la PrÃ©cision de Clustering sur Documents RÃ©els', fontsize=14)
+    plt.xticks(x, datasets, rotation=45, ha='right')
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.6)
+    plt.ylim(0, 100)
+    
+    # Annoter les victoires de L1 sur Fro
+    for i in range(len(df)):
+        if df['acc_L1'].iloc[i] > df['acc_Fro'].iloc[i]:
+            plt.text(x[i] - width, df['acc_L1'].iloc[i] + 1, "â˜…", 
+                     ha='center', color='red', fontsize=12, fontweight='bold')
+
+    plt.tight_layout()
+    plt.savefig(OUT_DIR / "docs_accuracy_comparison.png", dpi=150)
+    print(f"Graphique sauvegardÃ© : {OUT_DIR / 'docs_accuracy_comparison.png'}")
+
+    # ==========================================
+    # PLOT 2: TIME COMPARISON (Log Scale)
+    # ==========================================
+    plt.figure(figsize=(14, 6))
+    
+    plt.plot(datasets, df['time_L1'], 'o-', label='L1-ONMF', color='#d62728')
+    plt.plot(datasets, df['time_Fro'], 's-', label='Fro-ONMF', color='#1f77b4')
+    plt.plot(datasets, df['time_KL'], '^-', label='KL-ONMF', color='#2ca02c')
+    
+    plt.yscale('log') # Log scale car L1 est beaucoup plus lent
+    plt.ylabel('Time (seconds) - Log Scale', fontsize=12)
+    plt.title('Comparaison des Temps de Calcul', fontsize=14)
+    plt.xticks(rotation=45, ha='right')
+    plt.grid(True, which="both", ls="-", alpha=0.5)
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.savefig(OUT_DIR / "docs_time_comparison.png", dpi=150)
+    print(f"Graphique sauvegardÃ© : {OUT_DIR / 'docs_time_comparison.png'}")
+
+if __name__ == "__main__":
+    plot_results()
 
 
 
@@ -875,6 +976,12 @@ if __name__ == "__main__":
     
     # 3. Cas difficile (Sparse) 
     run_experiment("sparse_docs", m=1000, n=1000, r=4)
+
+
+
+
+
+
 
 
 
@@ -1407,29 +1514,25 @@ def alternating_l1_onmf(X, opts: L1ONMFOptions):
             print(f"Start L1-ONMF: m={m} n={n} r={r} init={opts.init} seed={seed}")
 
         for it in range(1, opts.maxiter + 1):
-            # 1. Update H
+            # 1. Update H (Hard assignment + optimal scales)
             H = update_H_l1(Xcsc if _is_sparse(X) else Xd, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
             
-            # 2. Gestion Cluster Vide
+            # 2. Gestion des clusters vides (Split)
             assign = np.argmax(H, axis=0)
             W, H, assign = handle_empty_clusters(X, W, H, assign)
             
-            # 3. Normalisation H
-            row_norms = np.linalg.norm(H, axis=1) + 1e-16
-            H = H / row_norms[:, None]
+            # 3. Normalisation exacte de H et W (Nouveau : respecte strictement WH)
+            # Cette ligne garantit que HH^T = I sans changer la valeur de l'erreur
+            H, W = normalize_rows_H_and_rescale_W(H, W)
 
-            # 4. Update W (Calcul Candidat)
+            # 4. Update W (Calcul du candidat via mÃ©diane pondÃ©rÃ©e)
             W_new = update_W_l1(Xcsr if _is_sparse(X) else Xd, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
             
-            # 5. INERTIE / MOMENTUM (INDISPENSABLE POUR L1)
-            # On ne prend que 30% du nouveau W, on garde 70% de l'ancien.
-            # Cela force une Ã©volution lente et empÃªche les sauts brutaux (zigzag).
+            # 5. Stabilisation par inertie (DÃ©fendable comme mÃ©thode de lissage)
             if it > 1:
                 W = 0.7 * W + 0.3 * W_new
             else:
                 W = W_new
-            
-            # Pas de renormalisation W ici (gÃ©rÃ© par le ratio)
 
             # Check erreur
             e = _rel_l1_error(W, H)

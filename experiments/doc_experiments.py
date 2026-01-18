@@ -33,18 +33,32 @@ DATASETS = [
     "tr23.mat", "tr41.mat", "tr45.mat", "NG20.mat", "ng3sim.mat"
 ]
 
-def save_convergence_plot(dataset_name, errors, seed):
-    if errors is None or len(errors) == 0: return
-    plt.figure(figsize=(8, 5))
-    plt.plot(errors, marker='o', markersize=3, label='Rel L1 Error')
+def save_convergence_plot(dataset_name, info, seed):
+    """Affiche les deux courbes : Pure (réelle) et Weighted (optimisée)."""
+    errors_pure = info.get("rel_l1_errors")
+    errors_weighted = info.get("rel_l1_errors_weighted")
+    
+    if errors_pure is None or len(errors_pure) == 0: return
+
+    plt.figure(figsize=(10, 6))
+    
+    # 1. Courbe Pure (L'erreur mathématique stricte)
+    plt.plot(errors_pure, marker='o', markersize=3, label='L1 Pure (Real)', alpha=0.6)
+    
+    # 2. Courbe Weighted (Ce que l'algo optimise vraiment)
+    if errors_weighted is not None and len(errors_weighted) > 0:
+        plt.plot(errors_weighted, marker='x', markersize=3, label='L1 Weighted (Optimized)', linestyle='--')
+
     plt.title(f"Convergence: {dataset_name} (seed={seed})")
     plt.xlabel("Iterations")
-    plt.ylabel("Rel L1 Error")
-    plt.grid(True)
+    plt.ylabel("Relative Error")
+    plt.grid(True, which='both', linestyle='--', alpha=0.7)
     plt.legend()
+    
+    # Sauvegarde
     out_dir = Path(__file__).parent / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_dir / f"{dataset_name}_conv.png")
+    plt.savefig(out_dir / f"{dataset_name}_conv.png", dpi=150)
     plt.close()
 
 def run_one(path):
@@ -87,7 +101,7 @@ def run_one(path):
         seed=SEED,
         verbose=True,
         log_errors=True,
-        enforce_W_nonneg=True,
+        enforce_W_nonneg=False,
         init="kmeans",  
         n_init=N_INIT,
     )
@@ -100,7 +114,7 @@ def run_one(path):
     acc = clustering_accuracy_hungarian(y, c_pred)
     
     print(f"  => ACC: {acc*100:.2f}% | Time: {t1-t0:.2f}s")
-    save_convergence_plot(dataset_name, info.get("rel_l1_errors"), info.get("seed"))
+    save_convergence_plot(dataset_name, info, info.get("seed"))
 
     return {
         "dataset": dataset_name,

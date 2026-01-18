@@ -91,6 +91,372 @@ if __name__ == "__main__":
 
 
 
+===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\ablation_plots.py =====
+
+# experiments/ablation_plots.py
+import sys
+import argparse
+import csv
+from pathlib import Path
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.feature_extraction.text import TfidfTransformer
+from sklearn.preprocessing import normalize
+
+# --- SETUP PATH ---
+PKG_PARENT = Path(__file__).resolve().parents[2]
+if str(PKG_PARENT) not in sys.path:
+    sys.path.insert(0, str(PKG_PARENT))
+
+from l1_ONMF.datasets import load_doc_mat, load_hsi_mat
+from l1_ONMF import alternating_l1_onmf, L1ONMFOptions
+from l1_ONMF.metrics import clustering_accuracy_hungarian
+
+
+# -----------------------------
+# Dirs
+# -----------------------------
+ROOT = Path(__file__).resolve().parents[1]
+DOC_DIR = ROOT / "data" / "docs"
+HSI_DIR = ROOT / "data" / "hsi"
+
+OUT_DIR = Path(__file__).resolve().parent / "plots" / "ablations_all"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+DEFAULT_MAX_FEATURES = 5000
+
+
+# -----------------------------
+# Ablation configs
+# -----------------------------
+CONFIGS = [
+    ("PURE (Î³=1, Î·=1)", 1.0, 1.0),
+    ("Only Î³ (Î³=0.05, Î·=1)", 0.05, 1.0),
+    ("Only inertia (Î³=1, Î·=0.3)", 1.0, 0.3),
+    ("Î³ + inertia (Î³=0.05, Î·=0.3)", 0.05, 0.3),
+]
+
+
+# -----------------------------
+# Preprocess
+# -----------------------------
+def preprocess_docs(X_raw, max_features=DEFAULT_MAX_FEATURES):
+    # X_raw: (words x docs) souvent sparse
+    X_t = X_raw.T  # docs x words
+    tfidf = TfidfTransformer(norm="l1", use_idf=True, smooth_idf=True)
+    X_t = tfidf.fit_transform(X_t)
+
+    # reduce vocab
+    if max_features is not None and X_t.shape[1] > int(max_features):
+        word_scores = np.asarray(X_t.sum(axis=0)).ravel()
+        idx = np.argsort(word_scores)[-int(max_features) :]
+        X_t = X_t[:, idx]
+
+    X = X_t.T  # words x docs
+    X = normalize(X, norm="l1", axis=0)
+    return X
+
+
+def preprocess_hsi(X):
+    # HSI est en gÃ©nÃ©ral dense & nonneg
+    X = np.asarray(X, dtype=float)
+    # normalise colonnes (pixels) pour Ãªtre cohÃ©rent avec ONMF hard-clustering
+    X = normalize(X, norm="l1", axis=0)
+    return X
+
+
+# -----------------------------
+# Helpers I/O
+# -----------------------------
+def list_mat_files(folder: Path):
+    if not folder.exists():
+        return []
+    return sorted([p for p in folder.iterdir() if p.is_file() and p.suffix.lower() == ".mat"])
+
+
+def safe_accuracy(y_true, H):
+    if y_true is None:
+        return None
+    y_pred = np.argmax(H, axis=0) + 1
+    return float(clustering_accuracy_hungarian(y_true, y_pred))
+
+
+def extract_final_metrics(info: dict):
+    """
+    On supporte plusieurs variantes de ton l1_onmf.py (suivant ce que tu as dÃ©jÃ  modifiÃ©).
+    """
+    # pure
+    if "final_pure" in info:
+        final_pure = float(info["final_pure"])
+    elif "final_err" in info:
+        final_pure = float(info["final_err"])
+    else:
+        rel = info.get("rel_l1_errors", None)
+        final_pure = float(rel[-1]) if rel is not None and len(rel) else np.nan
+
+    # weighted
+    if "final_weighted" in info:
+        final_weighted = float(info["final_err_weighted"])
+    else:
+        # fallback: si pas logguÃ©, on met pure (pour ne pas casser le CSV)
+        final_weighted = final_pure
+
+    num_iter = int(info.get("num_iter", 0))
+    return final_pure, final_weighted, num_iter
+
+
+# -----------------------------
+# Core runs
+# -----------------------------
+def run_single(X, y_true, r, gamma, eta, seed, maxiter):
+    opts = L1ONMFOptions(
+        r=int(r),
+        maxiter=int(maxiter),
+        init="kmeans",
+        n_init=1,
+        seed=int(seed),
+        verbose=False,
+        log_errors=True,
+        enforce_W_nonneg=True,
+        zero_weight=float(gamma),
+        inertia_eta=float(eta),
+        track_diagnostics=True,
+        patience=int(maxiter) + 1,  # pour garder longueur comparable
+    )
+    W, H, info = alternating_l1_onmf(X, opts)
+    acc = safe_accuracy(y_true, H)
+    final_pure, final_weighted, num_iter = extract_final_metrics(info)
+    return {
+        "acc": acc,
+        "final_pure": final_pure,
+        "final_weighted": final_weighted,
+        "num_iter": num_iter,
+        "info": info,
+    }
+
+
+def summarize_many(runs):
+    def _mean_std(vals):
+        vals = [v for v in vals if v is not None and np.isfinite(v)]
+        if len(vals) == 0:
+            return (None, None)
+        arr = np.asarray(vals, dtype=float)
+        if arr.size == 1:
+            return (float(arr[0]), 0.0)
+        return (float(arr.mean()), float(arr.std(ddof=1)))
+
+    acc_mean, acc_std = _mean_std([r["acc"] for r in runs])
+    pure_mean, pure_std = _mean_std([r["final_pure"] for r in runs])
+    w_mean, w_std = _mean_std([r["final_weighted"] for r in runs])
+    it_mean, it_std = _mean_std([r["num_iter"] for r in runs])
+
+    return {
+        "acc_mean": acc_mean,
+        "acc_std": acc_std,
+        "pure_mean": pure_mean,
+        "pure_std": pure_std,
+        "weighted_mean": w_mean,
+        "weighted_std": w_std,
+        "iter_mean": it_mean,
+        "iter_std": it_std,
+    }
+
+
+def ablation_one_dataset(kind, dataset_path, seeds, maxiter, max_features, make_plots=False):
+    name = dataset_path.name
+
+    # ---- load + preprocess
+    if kind == "docs":
+        X_raw, y_true, r = load_doc_mat(str(dataset_path))
+        X = preprocess_docs(X_raw, max_features=max_features)
+    elif kind == "hsi":
+        out = load_hsi_mat(str(dataset_path))
+
+        # On essaye dâ€™Ãªtre robuste aux signatures possibles.
+        # Cas attendu: (X, y_true, r) OU (X, y_true, r, ...) OU (X, r, ...)
+        X = out[0]
+        y_true = None
+        r = None
+
+        if len(out) >= 3:
+            # heuristique: si out[1] ressemble Ã  un vecteur de labels, on le prend
+            if isinstance(out[1], np.ndarray) and out[1].ndim == 1:
+                y_true = out[1]
+                r = out[2]
+            else:
+                # sinon on suppose que out[1] est r
+                r = out[1]
+        elif len(out) == 2:
+            r = out[1]
+
+        if r is None:
+            raise RuntimeError(f"Impossible d'infÃ©rer r depuis load_hsi_mat({dataset_path}).")
+
+        X = preprocess_hsi(X)
+    else:
+        raise ValueError("kind must be 'docs' or 'hsi'")
+
+    # ---- run configs
+    per_config = []
+    for cfg_name, gamma, eta in CONFIGS:
+        runs = []
+        for sd in seeds:
+            runs.append(run_single(X, y_true, r, gamma, eta, seed=sd, maxiter=maxiter))
+        summ = summarize_many(runs)
+        per_config.append({
+            "dataset": name,
+            "kind": kind,
+            "config": cfg_name,
+            "gamma": gamma,
+            "eta": eta,
+            **summ,
+        })
+
+    # ---- deltas vs PURE (sur les moyennes)
+    # baseline = premiÃ¨re config (PURE)
+    base = per_config[0]
+    for row in per_config:
+        if row["pure_mean"] is not None and base["pure_mean"] is not None:
+            row["delta_pure_vs_pure"] = row["pure_mean"] - base["pure_mean"]
+        else:
+            row["delta_pure_vs_pure"] = None
+
+        if row["weighted_mean"] is not None and base["weighted_mean"] is not None:
+            row["delta_weighted_vs_pure"] = row["weighted_mean"] - base["weighted_mean"]
+        else:
+            row["delta_weighted_vs_pure"] = None
+
+        if row["acc_mean"] is not None and base["acc_mean"] is not None:
+            row["delta_acc_vs_pure"] = row["acc_mean"] - base["acc_mean"]
+        else:
+            row["delta_acc_vs_pure"] = None
+
+    # ---- optional plots (1 seed = seeds[0]) pour limiter le temps
+    if make_plots and len(seeds) > 0:
+        sd0 = seeds[0]
+        curves = []
+        for cfg_name, gamma, eta in CONFIGS:
+            one = run_single(X, y_true, r, gamma, eta, seed=sd0, maxiter=maxiter)
+            info = one["info"]
+            curves.append((cfg_name, info.get("rel_l1_errors", None)))
+
+        # objective curves (rel_l1_errors)
+        plt.figure()
+        for cfg_name, y in curves:
+            if y is None or len(y) == 0:
+                continue
+            plt.plot(np.arange(1, len(y) + 1), y, label=cfg_name)
+        plt.xlabel("Iteration")
+        plt.ylabel("Relative L1 objective")
+        plt.grid(True)
+        plt.title(f"{kind}:{name} objective (seed={sd0})")
+        plt.legend()
+        plt.tight_layout()
+        outp = OUT_DIR / f"{kind}_{name}_obj_seed{sd0}.png"
+        plt.savefig(outp, dpi=150)
+        plt.close()
+
+    return per_config
+
+
+def write_csv(rows, outpath: Path):
+    if len(rows) == 0:
+        return
+    outpath.parent.mkdir(parents=True, exist_ok=True)
+
+    # stable column order
+    fieldnames = [
+        "kind", "dataset", "config", "gamma", "eta",
+        "acc_mean", "acc_std",
+        "pure_mean", "pure_std",
+        "weighted_mean", "weighted_std",
+        "iter_mean", "iter_std",
+        "delta_acc_vs_pure",
+        "delta_pure_vs_pure",
+        "delta_weighted_vs_pure",
+    ]
+
+    with outpath.open("w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, None) for k in fieldnames})
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--mode", choices=["docs", "hsi", "all"], default="all")
+    ap.add_argument("--maxiter", type=int, default=50)
+    ap.add_argument("--max_features", type=int, default=DEFAULT_MAX_FEATURES)
+    ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
+    ap.add_argument("--plots", action="store_true", help="save 1 objective plot per dataset (seed=seeds[0])")
+    args = ap.parse_args()
+
+    all_rows = []
+
+    if args.mode in ("docs", "all"):
+        doc_files = list_mat_files(DOC_DIR)
+        print(f"[DOCS] found {len(doc_files)} .mat files in {DOC_DIR}")
+        for p in doc_files:
+            try:
+                rows = ablation_one_dataset(
+                    kind="docs",
+                    dataset_path=p,
+                    seeds=args.seeds,
+                    maxiter=args.maxiter,
+                    max_features=args.max_features,
+                    make_plots=args.plots,
+                )
+                all_rows.extend(rows)
+                # mini print rÃ©sumÃ©
+                best = min(rows, key=lambda r: r["weighted_mean"] if r["weighted_mean"] is not None else np.inf)
+                print(f"  - {p.name}: best(weighted_mean) = {best['config']} -> {best['weighted_mean']}")
+            except Exception as e:
+                print(f"[DOCS][SKIP] {p.name} failed: {e}")
+
+    if args.mode in ("hsi", "all"):
+        hsi_files = list_mat_files(HSI_DIR)
+        print(f"[HSI] found {len(hsi_files)} .mat files in {HSI_DIR}")
+        for p in hsi_files:
+            try:
+                rows = ablation_one_dataset(
+                    kind="hsi",
+                    dataset_path=p,
+                    seeds=args.seeds,
+                    maxiter=args.maxiter,
+                    max_features=None,
+                    make_plots=args.plots,
+                )
+                all_rows.extend(rows)
+                best = min(rows, key=lambda r: r["weighted_mean"] if r["weighted_mean"] is not None else np.inf)
+                print(f"  - {p.name}: best(weighted_mean) = {best['config']} -> {best['weighted_mean']}")
+            except Exception as e:
+                print(f"[HSI][SKIP] {p.name} failed: {e}")
+
+    out_csv = OUT_DIR / "summary_all.csv"
+    write_csv(all_rows, out_csv)
+    print(f"[OK] wrote summary CSV: {out_csv}")
+
+    # petit tableau console: oÃ¹ Î³+inertie aide le plus sur weighted
+    # (delta_weighted_vs_pure < 0 = mieux)
+    candidates = [r for r in all_rows if r["config"].startswith("Î³ + inertia")]
+    candidates = [r for r in candidates if r.get("delta_weighted_vs_pure") is not None]
+    candidates.sort(key=lambda r: r["delta_weighted_vs_pure"])
+    print("\nTop-10 datasets where (Î³+inertia) improves WEIGHTED objective the most (negative is good):")
+    for r in candidates[:10]:
+        print(f"  {r['kind']:4s} | {r['dataset']:<20s} | Î”weighted={r['delta_weighted_vs_pure']:.6g} | Î”acc={r['delta_acc_vs_pure']}")
+
+    print("\nDone.")
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
 ===== FILE: C:\Users\Mathieu\Desktop\Research Project\l1_ONMF\experiments\compare_norms.py =====
 
 # experiments/compare_real_docs.py
@@ -263,18 +629,32 @@ DATASETS = [
     "tr23.mat", "tr41.mat", "tr45.mat", "NG20.mat", "ng3sim.mat"
 ]
 
-def save_convergence_plot(dataset_name, errors, seed):
-    if errors is None or len(errors) == 0: return
-    plt.figure(figsize=(8, 5))
-    plt.plot(errors, marker='o', markersize=3, label='Rel L1 Error')
+def save_convergence_plot(dataset_name, info, seed):
+    """Affiche les deux courbes : Pure (rÃ©elle) et Weighted (optimisÃ©e)."""
+    errors_pure = info.get("rel_l1_errors")
+    errors_weighted = info.get("rel_l1_errors_weighted")
+    
+    if errors_pure is None or len(errors_pure) == 0: return
+
+    plt.figure(figsize=(10, 6))
+    
+    # 1. Courbe Pure (L'erreur mathÃ©matique stricte)
+    plt.plot(errors_pure, marker='o', markersize=3, label='L1 Pure (Real)', alpha=0.6)
+    
+    # 2. Courbe Weighted (Ce que l'algo optimise vraiment)
+    if errors_weighted is not None and len(errors_weighted) > 0:
+        plt.plot(errors_weighted, marker='x', markersize=3, label='L1 Weighted (Optimized)', linestyle='--')
+
     plt.title(f"Convergence: {dataset_name} (seed={seed})")
     plt.xlabel("Iterations")
-    plt.ylabel("Rel L1 Error")
-    plt.grid(True)
+    plt.ylabel("Relative Error")
+    plt.grid(True, which='both', linestyle='--', alpha=0.7)
     plt.legend()
+    
+    # Sauvegarde
     out_dir = Path(__file__).parent / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_dir / f"{dataset_name}_conv.png")
+    plt.savefig(out_dir / f"{dataset_name}_conv.png", dpi=150)
     plt.close()
 
 def run_one(path):
@@ -330,7 +710,7 @@ def run_one(path):
     acc = clustering_accuracy_hungarian(y, c_pred)
     
     print(f"  => ACC: {acc*100:.2f}% | Time: {t1-t0:.2f}s")
-    save_convergence_plot(dataset_name, info.get("rel_l1_errors"), info.get("seed"))
+    save_convergence_plot(dataset_name, info, info.get("seed"))
 
     return {
         "dataset": dataset_name,
@@ -1402,6 +1782,7 @@ from .update_w import update_W_l1
 from .normalize import normalize_rows_H_and_rescale_W
 from .utils import handle_empty_clusters
 
+
 @dataclass
 class L1ONMFOptions:
     r: int
@@ -1416,19 +1797,26 @@ class L1ONMFOptions:
     verbose: bool = True
     eps: float = 1e-12
     init_prune_top: int | None = None
+    inertia_eta: float = 0.3        # eta (1.0 = pur sans inertie)
+    zero_weight: float = 0.05       # gamma (1.0 = pur)
+    track_diagnostics: bool = True  # pour logger W-change & sparsitÃ©
+
 
 def _is_sparse(X) -> bool:
     return sp is not None and sp.isspmatrix(X)
 
+
 def _abs_col_l1(W: np.ndarray) -> np.ndarray:
     return np.sum(np.abs(W), axis=0)
 
+
 def l1_obj_hard_sparse(Xcsc, W: np.ndarray, H: np.ndarray, eps: float = 1e-12) -> float:
+    # Objectif L1 "pur" pour X creuse, en tenant compte des zÃ©ros implicites (poids 1)
     k, n = H.shape
     assign = np.argmax(H, axis=0).astype(int)
     s = H[assign, np.arange(n)]
     absW_l1 = _abs_col_l1(W)
-    
+
     total = 0.0
     indptr, indices, data = Xcsc.indptr, Xcsc.indices, Xcsc.data
 
@@ -1441,13 +1829,61 @@ def l1_obj_hard_sparse(Xcsc, W: np.ndarray, H: np.ndarray, eps: float = 1e-12) -
 
         wk_idx = W[idx, kk]
         total += float(np.sum(np.abs(xnz - sj * wk_idx)))
+        # zÃ©ros implicites
         total += sj * float(absW_l1[kk] - np.sum(np.abs(wk_idx)))
 
     return total
 
+
 def l1_obj_dense(X: np.ndarray, W: np.ndarray, H: np.ndarray) -> float:
     R = X - W @ H
     return float(np.sum(np.abs(R)))
+
+
+def l1_obj_hard_sparse_weighted(Xcsc, W: np.ndarray, H: np.ndarray, zero_weight: float, eps: float = 1e-12) -> float:
+    """
+    Objectif L1 pondÃ©rÃ© pour X creuse:
+      - non-zÃ©ros observÃ©s: poids 1
+      - zÃ©ros implicites: poids gamma (=zero_weight)
+    """
+    k, n = H.shape
+    assign = np.argmax(H, axis=0).astype(int)
+    s = H[assign, np.arange(n)]
+    absW_l1 = _abs_col_l1(W)
+
+    gamma = float(zero_weight)
+    total = 0.0
+    indptr, indices, data = Xcsc.indptr, Xcsc.indices, Xcsc.data
+
+    for j in range(n):
+        kk = assign[j]
+        sj = float(s[j])
+        a, b = indptr[j], indptr[j + 1]
+        idx = indices[a:b]
+        xnz = data[a:b]
+
+        wk_idx = W[idx, kk]
+        # non-zÃ©ros observÃ©s (poids 1)
+        total += float(np.sum(np.abs(xnz - sj * wk_idx)))
+        # zÃ©ros implicites (poids gamma)
+        total += gamma * sj * float(absW_l1[kk] - np.sum(np.abs(wk_idx)))
+
+    return total
+
+
+def l1_obj_dense_weighted(X: np.ndarray, W: np.ndarray, H: np.ndarray, zero_weight: float) -> float:
+    """
+    Objectif L1 pondÃ©rÃ© pour X dense:
+      - X != 0 : poids 1
+      - X == 0 : poids gamma
+    (utile surtout si ton X dense contient vraiment des zÃ©ros)
+    """
+    R = X - (W @ H)
+    gamma = float(zero_weight)
+    weights = np.ones_like(X, dtype=float)
+    weights[X == 0] = gamma
+    return float(np.sum(weights * np.abs(R)))
+
 
 def alternating_l1_onmf(X, opts: L1ONMFOptions):
     if _is_sparse(X):
@@ -1470,96 +1906,181 @@ def alternating_l1_onmf(X, opts: L1ONMFOptions):
             init = "snpa" if (X_is_nonneg and _is_sparse(X)) else "warm_fro"
 
         if init == "snpa":
-            if not X_is_nonneg: raise ValueError("init='snpa' nÃ©cessite X >= 0.")
+            if not X_is_nonneg:
+                raise ValueError("init='snpa' nÃ©cessite X >= 0.")
             W0, _, _ = init_W_snpa(Xcsc if _is_sparse(X) else Xd, r, seed=seed)
+
         elif init == "kmeans":
             W0 = init_W_kmeans(Xcsc if _is_sparse(X) else Xd, r, seed=seed)
+
         elif init == "random":
-            W0 = init_W_random(Xcsc if _is_sparse(X) else Xd, r, seed=seed, nonneg=(opts.enforce_W_nonneg and X_is_nonneg))
+            W0 = init_W_random(
+                Xcsc if _is_sparse(X) else Xd,
+                r,
+                seed=seed,
+                nonneg=(opts.enforce_W_nonneg and X_is_nonneg),
+            )
+
         elif init == "warm_fro":
             W0 = warm_start_from_fro_onmf(Xd, r, iters=3, seed=seed)
+
         else:
             raise ValueError(f"Unknown init='{opts.init}'")
 
-        if opts.enforce_W_nonneg: W0 = np.maximum(0.0, W0)
+        if opts.enforce_W_nonneg:
+            W0 = np.maximum(0.0, W0)
+
         col_sums = np.sum(W0, axis=0) + opts.eps
         W0 = W0 / col_sums[None, :]
         return W0
 
-    def _rel_l1_error(W, H) -> float:
+    def _rel_l1_error_pure(W, H) -> float:
         if _is_sparse(X):
             obj = l1_obj_hard_sparse(Xcsc, W, H, eps=opts.eps)
         else:
             obj = l1_obj_dense(Xd, W, H)
         return float(obj / den)
 
+    def _rel_l1_error_weighted(W, H) -> float:
+        if _is_sparse(X):
+            obj = l1_obj_hard_sparse_weighted(Xcsc, W, H, zero_weight=opts.zero_weight, eps=opts.eps)
+        else:
+            obj = l1_obj_dense_weighted(Xd, W, H, zero_weight=opts.zero_weight)
+        return float(obj / den)
+
     def _run_once(seed: int | None):
         W = _init_W(seed)
-        
+
         # Init H
-        H = update_H_l1(Xcsc if _is_sparse(X) else Xd, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-        
-        # Gestion Cluster Vide (MÃ©thode Prof)
+        H = update_H_l1(
+            Xcsc if _is_sparse(X) else Xd,
+            W,
+            enforce_W_nonneg=opts.enforce_W_nonneg,
+            eps=opts.eps,
+        )
+
+        # Gestion cluster vide (mÃ©thode prof)
         assign = np.argmax(H, axis=0)
         W, H, assign = handle_empty_clusters(X, W, H, assign)
-        
+
+        # Normalise initialement H (pas obligatoire mais tu le fais dÃ©jÃ )
         row_norms = np.linalg.norm(H, axis=1) + 1e-16
         H = H / row_norms[:, None]
 
-        errs = []
+        errs_pure = []
+        errs_weighted = []
         prev = None
         stall = 0
 
         if opts.verbose:
             print(f"Start L1-ONMF: m={m} n={n} r={r} init={opts.init} seed={seed}")
 
+        w_changes = []
+        w_nnz_frac = []
+        min_cluster_sizes = []
+
         for it in range(1, opts.maxiter + 1):
-            # 1. Update H (Hard assignment + optimal scales)
-            H = update_H_l1(Xcsc if _is_sparse(X) else Xd, W, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-            
-            # 2. Gestion des clusters vides (Split)
+            # 1) Update H
+            H = update_H_l1(
+                Xcsc if _is_sparse(X) else Xd,
+                W,
+                enforce_W_nonneg=opts.enforce_W_nonneg,
+                eps=opts.eps,
+            )
+
+            # 2) Gestion clusters vides
             assign = np.argmax(H, axis=0)
             W, H, assign = handle_empty_clusters(X, W, H, assign)
-            
-            # 3. Normalisation exacte de H et W (Nouveau : respecte strictement WH)
-            # Cette ligne garantit que HH^T = I sans changer la valeur de l'erreur
+
+            # 3) Normalisation exacte de H et rescale W (conserve WH)
             H, W = normalize_rows_H_and_rescale_W(H, W)
 
-            # 4. Update W (Calcul du candidat via mÃ©diane pondÃ©rÃ©e)
-            W_new = update_W_l1(Xcsr if _is_sparse(X) else Xd, H, enforce_W_nonneg=opts.enforce_W_nonneg, eps=opts.eps)
-            
-            # 5. Stabilisation par inertie (DÃ©fendable comme mÃ©thode de lissage)
-            if it > 1:
-                W = 0.7 * W + 0.3 * W_new
-            else:
-                W = W_new
+            # 4) Update W (mÃ©diane pondÃ©rÃ©e) + inertie
+            W_prev = W.copy()
 
-            # Check erreur
-            e = _rel_l1_error(W, H)
-            if opts.log_errors: errs.append(e)
+            W_new = update_W_l1(
+                Xcsr if _is_sparse(X) else Xd,
+                H,
+                enforce_W_nonneg=opts.enforce_W_nonneg,
+                eps=opts.eps,
+                zero_weight=opts.zero_weight,
+            )
+
+            eta = float(opts.inertia_eta)
+            if eta < 0.0:
+                eta = 0.0
+            if eta > 1.0:
+                eta = 1.0
+
+            W = (1.0 - eta) * W + eta * W_new
+
+            # Diagnostics
+            if opts.track_diagnostics:
+                num = float(np.linalg.norm(W - W_prev))
+                denW = float(np.linalg.norm(W_prev) + 1e-16)
+                w_changes.append(num / denW)
+
+                thr = 1e-12
+                w_nnz_frac.append(float(np.mean(np.abs(W) > thr)))
+
+                sizes = np.bincount(assign, minlength=r)
+                min_cluster_sizes.append(int(sizes.min()))
+
+            # Erreurs: L1 pur + L1 pondÃ©rÃ©
+            e_pure = _rel_l1_error_pure(W, H)
+            e_w = _rel_l1_error_weighted(W, H)
+
+            if opts.log_errors:
+                errs_pure.append(e_pure)
+                errs_weighted.append(e_w)
 
             if opts.verbose and it % 10 == 0:
-                print(f"  Iter {it:03d} | relL1={e:.6f}")
+                print(f"  Iter {it:03d} | relL1(pure)={e_pure:.6f} | relL1(weighted)={e_w:.6f}")
+
+            # Early stop (sur l'objectif que tu optimises vraiment)
+            e_for_stop = e_w if abs(float(opts.zero_weight) - 1.0) > 1e-15 else e_pure
 
             if prev is not None and it >= 5:
-                rel_impr = (prev - e) / (abs(prev) + 1e-16)
-                if rel_impr < opts.l1_tol: stall += 1
-                else: stall = 0
+                rel_impr = (prev - e_for_stop) / (abs(prev) + 1e-16)
+                if rel_impr < opts.l1_tol:
+                    stall += 1
+                else:
+                    stall = 0
                 if stall >= opts.patience:
                     break
-            prev = e
+            prev = e_for_stop
 
-        info = {"rel_l1_errors": np.array(errs), "num_iter": it, "final_err": float(errs[-1] if errs else 0), "seed": seed}
+        info = {
+            # IMPORTANT: on garde ce nom pour ne rien casser dans tes scripts
+            "rel_l1_errors": np.array(errs_pure, dtype=float),
+            # nouveau: objectif rÃ©ellement optimisÃ© quand gamma != 1
+            "rel_l1_errors_weighted": np.array(errs_weighted, dtype=float),
+            "num_iter": it,
+            "final_err": float(errs_pure[-1] if errs_pure else 0.0),
+            "final_err_weighted": float(errs_weighted[-1] if errs_weighted else 0.0),
+            "seed": seed,
+        }
+
+        if opts.track_diagnostics:
+            info["w_changes"] = np.array(w_changes, dtype=float)
+            info["w_nnz_frac"] = np.array(w_nnz_frac, dtype=float)
+            info["min_cluster_sizes"] = np.array(min_cluster_sizes, dtype=int)
+
         return W, H, info
 
     n_init = max(1, int(opts.n_init))
     base = 0 if opts.seed is None else int(opts.seed)
+
+    # On garde la sÃ©lection sur final_err "pur" par dÃ©faut (compat)
+    # Si tu veux sÃ©lectionner sur l'objectif pondÃ©rÃ©, dis-le et je te donne la ligne exacte.
     best = (None, None, {"final_err": np.inf})
     for t in range(n_init):
         Wt, Ht, infot = _run_once(base + t)
         if infot["final_err"] < best[2]["final_err"]:
             best = (Wt, Ht, infot)
+
     return best
+
 
 
 
@@ -2066,47 +2587,42 @@ except ImportError:
 
 from .medians import weighted_median_numba
 
-# --- PARAMETRE DE REGULARISATION ---
-# C'est la "sauce secrÃ¨te" pour le Sparse L1.
-# 0.05 signifie que les zÃ©ros "tirent" 20 fois moins fort sur la mÃ©diane que les vraies valeurs.
-# Cela permet au centroÃ¯de de s'aligner sur les mots prÃ©sents.
-ZERO_WEIGHT = 0.05 
-# -----------------------------------
 
 def _is_sparse(X) -> bool:
     return sp is not None and sp.isspmatrix(X)
 
 @njit(parallel=True, cache=True)
-def _update_W_csr_numba(data, indices, indptr, m, k, assign, s, enforce_nonneg, sum_s, eps):
+def _update_W_csr_numba(data, indices, indptr, m, k, assign, s, enforce_nonneg, sum_s, eps, zero_weight):
     W = np.zeros((m, k), dtype=np.float64)
     for d in prange(m):
         start_idx = indptr[d]
         end_idx = indptr[d+1]
-        if start_idx == end_idx: continue
-            
+        if start_idx == end_idx:
+            continue
+
         row_cols = indices[start_idx:end_idx]
         row_vals = data[start_idx:end_idx]
-        
+
         for cluster_id in range(k):
             count = 0
             curr_sum_weights = 0.0
-            
-            # Passe 1 : on compte les Ã©lÃ©ments non-nuls pour ce cluster
+
+            # Passe 1 : compter les non-nuls dans ce cluster
             for i in range(len(row_cols)):
                 doc_idx = row_cols[i]
                 if assign[doc_idx] == cluster_id:
                     if s[doc_idx] > eps:
                         curr_sum_weights += s[doc_idx]
                         count += 1
-            
-            if count == 0 and sum_s[cluster_id] <= eps: continue
 
-            # Allocation dynamique
+            if count == 0 and sum_s[cluster_id] <= eps:
+                continue
+
             vals_med = np.empty(count + 1, dtype=np.float64)
             wgts_med = np.empty(count + 1, dtype=np.float64)
-            
+
             ptr = 0
-            # Passe 2 : on remplit avec les valeurs prÃ©sentes
+            # Passe 2 : ratios prÃ©sents
             for i in range(len(row_cols)):
                 doc_idx = row_cols[i]
                 if assign[doc_idx] == cluster_id:
@@ -2115,39 +2631,44 @@ def _update_W_csr_numba(data, indices, indptr, m, k, assign, s, enforce_nonneg, 
                         vals_med[ptr] = row_vals[i] / si
                         wgts_med[ptr] = si
                         ptr += 1
-            
-            # REGULARISATION DES ZEROS (Les documents du cluster qui n'ont pas ce mot)
+
+            # ZÃ©ros implicites : point Ã  0 avec poids rÃ©duit
             extra0 = sum_s[cluster_id] - curr_sum_weights
             if extra0 > 1e-14:
                 vals_med[ptr] = 0.0
-                # On applique le poids rÃ©duit aux zÃ©ros pour Ã©viter l'effondrement
-                wgts_med[ptr] = extra0 * ZERO_WEIGHT 
+                wgts_med[ptr] = extra0 * zero_weight
                 ptr += 1
-            
+
             if ptr > 0:
                 val = weighted_median_numba(vals_med[:ptr], wgts_med[:ptr])
-                if enforce_nonneg and val < 0: val = 0.0
+                if enforce_nonneg and val < 0:
+                    val = 0.0
                 W[d, cluster_id] = val
+
     return W
 
+
 @njit(parallel=True, cache=True)
-def _update_W_dense_numba(X, m, n, k, assign, s, enforce_nonneg, sum_s, eps):
+def _update_W_dense_numba(X, m, n, k, assign, s, enforce_nonneg, sum_s, eps, zero_weight):
     W = np.zeros((m, k), dtype=np.float64)
     for d in prange(m):
-        row_vals = X[d, :] 
+        row_vals = X[d, :]
         for cluster_id in range(k):
             count = 0
             curr_sum_weights = 0.0
+
             # Passe 1
             for j in range(n):
-                if assign[j] == cluster_id:
-                    if s[j] > eps:
-                        curr_sum_weights += s[j]
-                        count += 1
-            if count == 0 and sum_s[cluster_id] <= eps: continue
+                if assign[j] == cluster_id and s[j] > eps:
+                    curr_sum_weights += s[j]
+                    count += 1
+
+            if count == 0 and sum_s[cluster_id] <= eps:
+                continue
 
             vals_med = np.empty(count + 1, dtype=np.float64)
             wgts_med = np.empty(count + 1, dtype=np.float64)
+
             ptr = 0
             # Passe 2
             for j in range(n):
@@ -2157,40 +2678,41 @@ def _update_W_dense_numba(X, m, n, k, assign, s, enforce_nonneg, sum_s, eps):
                         vals_med[ptr] = row_vals[j] / si
                         wgts_med[ptr] = si
                         ptr += 1
-            
-            # REGULARISATION DES ZEROS
+
             extra0 = sum_s[cluster_id] - curr_sum_weights
             if extra0 > 1e-14:
                 vals_med[ptr] = 0.0
-                wgts_med[ptr] = extra0 * ZERO_WEIGHT 
+                wgts_med[ptr] = extra0 * zero_weight
                 ptr += 1
-                
+
             if ptr > 0:
                 val = weighted_median_numba(vals_med[:ptr], wgts_med[:ptr])
-                if enforce_nonneg and val < 0: val = 0.0
+                if enforce_nonneg and val < 0:
+                    val = 0.0
                 W[d, cluster_id] = val
+
     return W
 
-def update_W_l1(X, H, enforce_W_nonneg=True, eps=1e-12):
+def update_W_l1(X, H, enforce_W_nonneg=True, eps=1e-12, zero_weight: float = 0.05):
     H = np.asarray(H, dtype=float)
     k, n = H.shape
     assign = np.argmax(H, axis=0).astype(np.int32)
     s = H[assign, np.arange(n)].astype(np.float64)
     sum_s = np.bincount(assign, weights=s, minlength=k).astype(np.float64)
 
+    zw = float(zero_weight)
+
     if _is_sparse(X):
-        # Utilisation de CSR (Compressed Sparse Row) car on accÃ¨de par ligne (mot)
-        Xcsr = X.tocsr() 
+        Xcsr = X.tocsr()
         data = Xcsr.data.astype(np.float64)
         indices = Xcsr.indices.astype(np.int32)
         indptr = Xcsr.indptr.astype(np.int32)
         m = Xcsr.shape[0]
-        return _update_W_csr_numba(data, indices, indptr, m, k, assign, s, enforce_W_nonneg, sum_s, eps)
+        return _update_W_csr_numba(data, indices, indptr, m, k, assign, s, enforce_W_nonneg, sum_s, eps, zw)
     else:
-        # Cas dense
         Xd = np.asarray(X, dtype=float)
         m = Xd.shape[0]
-        return _update_W_dense_numba(Xd, m, n, k, assign, s, enforce_W_nonneg, sum_s, eps)
+        return _update_W_dense_numba(Xd, m, n, k, assign, s, enforce_W_nonneg, sum_s, eps, zw)
 
 
 

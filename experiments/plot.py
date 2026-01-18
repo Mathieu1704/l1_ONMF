@@ -3,10 +3,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-import sys
 
 # --- CONFIGURATION ---
-CSV_FILE = Path(__file__).parent / "table_comparative_real_docs.csv"
+CSV_FILE = Path(__file__).parent / "../docs_full_comparison.csv"
+# Si tu utilises le nouveau CSV généré: remplace par
+# CSV_FILE = Path(__file__).parent / "../docs_full_from_latex_in_sample_schema.csv"
+
 OUT_DIR = Path(__file__).parent / "plots" / "docs"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -15,13 +17,29 @@ def plot_results():
         print(f"Erreur: Le fichier {CSV_FILE} n'existe pas.")
         return
 
-    # Chargement des données
     df = pd.read_csv(CSV_FILE)
-    
-    # Tri par taille de dataset (n) pour la lisibilité
-    df = df.sort_values('n')
-    
-    datasets = df['dataset'].str.replace('.mat', '', regex=False)
+
+    # -------------------------
+    # NETTOYAGE (IMPORTANT)
+    # -------------------------
+    # Enlever lignes sans dataset (ligne vide finale) + enlever "Averages" pour les plots dataset-par-dataset
+    df["dataset"] = df["dataset"].astype("string")
+    df = df[df["dataset"].notna() & (df["dataset"].str.strip() != "")]
+    df = df[df["dataset"].str.lower() != "averages"]
+
+    # Convertir colonnes numériques proprement (au cas où des champs vides existent)
+    num_cols = ["n","m","r","acc_L1","acc_Fro","acc_KL","time_L1","time_Fro","time_KL","it_L1","it_Fro","it_KL"]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Garder uniquement les lignes complètes pour les plots
+    df = df.dropna(subset=["n","acc_L1","acc_Fro","acc_KL","time_L1","time_Fro","time_KL"])
+
+    # Tri par taille (n)
+    df = df.sort_values("n").reset_index(drop=True)
+
+    datasets = df["dataset"].str.replace(".mat", "", regex=False).tolist()
     x = np.arange(len(datasets))
     width = 0.25
 
@@ -29,49 +47,52 @@ def plot_results():
     # PLOT 1: ACCURACY COMPARISON
     # ==========================================
     plt.figure(figsize=(14, 7))
-    
-    # Barres
-    plt.bar(x - width, df['acc_L1'], width, label='L1-ONMF', color='#d62728', alpha=0.8)
-    plt.bar(x, df['acc_Fro'], width, label='Fro-ONMF', color='#1f77b4', alpha=0.8)
-    plt.bar(x + width, df['acc_KL'], width, label='KL-ONMF', color='#2ca02c', alpha=0.8)
-    
-    # Esthétique
-    plt.ylabel('Accuracy (%)', fontsize=12)
-    plt.title('Comparaison de la Précision de Clustering sur Documents Réels', fontsize=14)
-    plt.xticks(x, datasets, rotation=45, ha='right')
+
+    plt.bar(x - width, df["acc_L1"],  width, label="L1-ONMF", alpha=0.8)
+    plt.bar(x,         df["acc_Fro"], width, label="Fro-ONMF", alpha=0.8)
+    plt.bar(x + width, df["acc_KL"],  width, label="KL-ONMF", alpha=0.8)
+
+    plt.ylabel("Accuracy (%)", fontsize=12)
+    plt.title("Comparaison de la Précision de Clustering sur Documents Réels", fontsize=14)
+    plt.xticks(x, datasets, rotation=45, ha="right")
     plt.legend()
-    plt.grid(axis='y', linestyle='--', alpha=0.6)
+    plt.grid(axis="y", linestyle="--", alpha=0.6)
     plt.ylim(0, 100)
-    
-    # Annoter les victoires de L1 sur Fro
+
+    # Annoter seulement quand L1 bat Fro ET KL
     for i in range(len(df)):
-        if df['acc_L1'].iloc[i] > df['acc_Fro'].iloc[i]:
-            plt.text(x[i] - width, df['acc_L1'].iloc[i] + 1, "★", 
-                     ha='center', color='red', fontsize=12, fontweight='bold')
+        l1  = df["acc_L1"].iloc[i]
+        fro = df["acc_Fro"].iloc[i]
+        kl  = df["acc_KL"].iloc[i]
+        if (l1 > fro) and (l1 > kl):
+            plt.text(x[i] - width, l1 + 1, "★", ha="center", fontsize=12, fontweight="bold")
 
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "docs_accuracy_comparison.png", dpi=150)
-    print(f"Graphique sauvegardé : {OUT_DIR / 'docs_accuracy_comparison.png'}")
+    out1 = OUT_DIR / "docs_accuracy_comparison.png"
+    plt.savefig(out1, dpi=150)
+    print(f"Graphique sauvegardé : {out1}")
 
     # ==========================================
     # PLOT 2: TIME COMPARISON (Log Scale)
     # ==========================================
     plt.figure(figsize=(14, 6))
-    
-    plt.plot(datasets, df['time_L1'], 'o-', label='L1-ONMF', color='#d62728')
-    plt.plot(datasets, df['time_Fro'], 's-', label='Fro-ONMF', color='#1f77b4')
-    plt.plot(datasets, df['time_KL'], '^-', label='KL-ONMF', color='#2ca02c')
-    
-    plt.yscale('log') # Log scale car L1 est beaucoup plus lent
-    plt.ylabel('Time (seconds) - Log Scale', fontsize=12)
-    plt.title('Comparaison des Temps de Calcul', fontsize=14)
-    plt.xticks(rotation=45, ha='right')
+
+    # IMPORTANT: on utilise x (indices) => plus de problème de catégories/NaN
+    plt.plot(x, df["time_L1"],  "o-", label="L1-ONMF")
+    plt.plot(x, df["time_Fro"], "s-", label="Fro-ONMF")
+    plt.plot(x, df["time_KL"],  "^-", label="KL-ONMF")
+
+    plt.yscale("log")
+    plt.ylabel("Time (seconds) - Log Scale", fontsize=12)
+    plt.title("Comparaison des Temps de Calcul", fontsize=14)
+    plt.xticks(x, datasets, rotation=45, ha="right")
     plt.grid(True, which="both", ls="-", alpha=0.5)
     plt.legend()
-    
+
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "docs_time_comparison.png", dpi=150)
-    print(f"Graphique sauvegardé : {OUT_DIR / 'docs_time_comparison.png'}")
+    out2 = OUT_DIR / "docs_time_comparison.png"
+    plt.savefig(out2, dpi=150)
+    print(f"Graphique sauvegardé : {out2}")
 
 if __name__ == "__main__":
     plot_results()

@@ -89,7 +89,7 @@ def run_one(path):
     
     X = X_t.T # (m, n)
 
-    # 3. NORMALISATION CRITIQUE
+    # 3. NORMALISATION CRITIQUE$$
     # Indispensable pour que K-Means (l'init) et L1 (l'algo) voient la même géométrie
     X = normalize(X, norm='l1', axis=0)
 

@@ -23,8 +23,8 @@ from l1_ONMF.metrics import clustering_accuracy_hungarian
 # Dirs
 # -----------------------------
 ROOT = Path(__file__).resolve().parents[1]
-DOC_DIR = ROOT / "data" / "docs"
-HSI_DIR = ROOT / "data" / "hsi"
+DOC_DIR = ROOT / "data" / "docs" 
+# HSI_DIR = ROOT / "data" / "hsi"
 
 OUT_DIR = Path(__file__).resolve().parent / "plots" / "ablations_all"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -89,7 +89,10 @@ def safe_accuracy(y_true, H):
 
 def extract_final_metrics(info: dict):
     """
-    On supporte plusieurs variantes de ton l1_onmf.py (suivant ce que tu as déjà modifié).
+    Compatible avec l'API actuelle de l1_onmf.py:
+      - final_err
+      - final_err_weighted
+      - rel_l1_errors / rel_l1_errors_weighted
     """
     # pure
     if "final_pure" in info:
@@ -101,14 +104,17 @@ def extract_final_metrics(info: dict):
         final_pure = float(rel[-1]) if rel is not None and len(rel) else np.nan
 
     # weighted
-    if "final_weighted" in info:
+    if "final_err_weighted" in info:
         final_weighted = float(info["final_err_weighted"])
+    elif "final_weighted" in info:
+        final_weighted = float(info["final_weighted"])
     else:
-        # fallback: si pas loggué, on met pure (pour ne pas casser le CSV)
-        final_weighted = final_pure
+        relw = info.get("rel_l1_errors_weighted", None)
+        final_weighted = float(relw[-1]) if relw is not None and len(relw) else final_pure
 
     num_iter = int(info.get("num_iter", 0))
     return final_pure, final_weighted, num_iter
+
 
 
 # -----------------------------
@@ -244,7 +250,12 @@ def ablation_one_dataset(kind, dataset_path, seeds, maxiter, max_features, make_
         for cfg_name, gamma, eta in CONFIGS:
             one = run_single(X, y_true, r, gamma, eta, seed=sd0, maxiter=maxiter)
             info = one["info"]
-            curves.append((cfg_name, info.get("rel_l1_errors", None)))
+            if abs(gamma - 1.0) < 1e-12:
+                y = info.get("rel_l1_errors", None)  # objectif pur
+            else:
+                y = info.get("rel_l1_errors_weighted", None)  # objectif optimisé
+            curves.append((cfg_name, y))
+
 
         # objective curves (rel_l1_errors)
         plt.figure()

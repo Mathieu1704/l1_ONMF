@@ -118,8 +118,8 @@ from l1_ONMF.metrics import clustering_accuracy_hungarian
 # Dirs
 # -----------------------------
 ROOT = Path(__file__).resolve().parents[1]
-DOC_DIR = ROOT / "data" / "docs"
-HSI_DIR = ROOT / "data" / "hsi"
+DOC_DIR = ROOT / "data" / "docs" 
+# HSI_DIR = ROOT / "data" / "hsi"
 
 OUT_DIR = Path(__file__).resolve().parent / "plots" / "ablations_all"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -339,7 +339,12 @@ def ablation_one_dataset(kind, dataset_path, seeds, maxiter, max_features, make_
         for cfg_name, gamma, eta in CONFIGS:
             one = run_single(X, y_true, r, gamma, eta, seed=sd0, maxiter=maxiter)
             info = one["info"]
-            curves.append((cfg_name, info.get("rel_l1_errors", None)))
+            if abs(gamma - 1.0) < 1e-12:
+                y = info.get("rel_l1_errors", None)  # objectif pur
+            else:
+                y = info.get("rel_l1_errors_weighted", None)  # objectif optimisÃ©
+            curves.append((cfg_name, y))
+
 
         # objective curves (rel_l1_errors)
         plt.figure()
@@ -672,39 +677,47 @@ TOL = 1e-6
 SEED = 42
 N_INIT = 5    # On assure le coup avec 5 inits
 
-DATASETS = [
-    "classic.mat", "sports.mat", "reviews.mat", "hitech.mat", "ohscal.mat", 
-    "la1.mat", "k1b.mat", "la12.mat", "la2.mat", "tr11.mat", 
-    "tr23.mat", "tr41.mat", "tr45.mat", "NG20.mat", "ng3sim.mat"
-]
+# DATASETS = [
+#     "classic.mat", "sports.mat", "reviews.mat", "hitech.mat", "ohscal.mat", 
+#     "la1.mat", "k1b.mat", "la12.mat", "la2.mat", "tr11.mat", 
+#     "tr23.mat", "tr41.mat", "tr45.mat", "NG20.mat", "ng3sim.mat"
+# ]
 
-def save_convergence_plot(dataset_name, info, seed):
-    """Affiche les deux courbes : Pure (rÃ©elle) et Weighted (optimisÃ©e)."""
-    errors_pure = info.get("rel_l1_errors")
-    errors_weighted = info.get("rel_l1_errors_weighted")
-    
-    if errors_pure is None or len(errors_pure) == 0: return
+DATASETS = ["classic.mat"]
+
+def save_convergence_plot(dataset_name, info, seed, gamma):
+    pure = info.get("rel_l1_errors")
+    w = info.get("rel_l1_errors_weighted")
+
+    if pure is None or len(pure) == 0:
+        return
+
+    it_p = np.arange(1, len(pure) + 1)
 
     plt.figure(figsize=(10, 6))
-    
-    # 1. Courbe Pure (L'erreur mathÃ©matique stricte)
-    plt.plot(errors_pure, marker='o', markersize=3, label='L1 Pure (Real)', alpha=0.6)
-    
-    # 2. Courbe Weighted (Ce que l'algo optimise vraiment)
-    if errors_weighted is not None and len(errors_weighted) > 0:
-        plt.plot(errors_weighted, marker='x', markersize=3, label='L1 Weighted (Optimized)', linestyle='--')
+
+    # Si gamma==1, les deux devraient coÃ¯ncider -> on affiche une seule courbe
+    if abs(gamma - 1.0) < 1e-12 or w is None or len(w) == 0:
+        plt.plot(it_p, pure, marker='o', markersize=3, label=f"Rel L1 error (Î³=1)", alpha=0.7)
+    else:
+        it_w = np.arange(1, len(w) + 1)
+        plt.plot(it_w, w, marker='x', markersize=3, linestyle='--',
+                 label=f"Optimized objective (weighted, Î³={gamma})")
+        plt.plot(it_p, pure, marker='o', markersize=3, alpha=0.5,
+                 label="Unweighted objective (Î³=1) [diagnostic]")
 
     plt.title(f"Convergence: {dataset_name} (seed={seed})")
     plt.xlabel("Iterations")
-    plt.ylabel("Relative Error")
-    plt.grid(True, which='both', linestyle='--', alpha=0.7)
+    plt.ylabel("Relative objective value")
+    plt.grid(True, which='both', linestyle='--', alpha=0.6)
     plt.legend()
-    
-    # Sauvegarde
+    plt.tight_layout()
+
     out_dir = Path(__file__).parent / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_dir / f"{dataset_name}_conv.png", dpi=150)
+    plt.savefig(out_dir / f"{dataset_name}_conv_gamma{gamma}.png", dpi=150)
     plt.close()
+
 
 def run_one(path):
     dataset_name = Path(path).name
@@ -734,7 +747,7 @@ def run_one(path):
     
     X = X_t.T # (m, n)
 
-    # 3. NORMALISATION CRITIQUE
+    # 3. NORMALISATION CRITIQUE$$
     # Indispensable pour que K-Means (l'init) et L1 (l'algo) voient la mÃªme gÃ©omÃ©trie
     X = normalize(X, norm='l1', axis=0)
 
@@ -749,6 +762,7 @@ def run_one(path):
         enforce_W_nonneg=False,
         init="kmeans",  
         n_init=N_INIT,
+       
     )
 
     t0 = time.perf_counter()
@@ -759,7 +773,7 @@ def run_one(path):
     acc = clustering_accuracy_hungarian(y, c_pred)
     
     print(f"  => ACC: {acc*100:.2f}% | Time: {t1-t0:.2f}s")
-    save_convergence_plot(dataset_name, info, info.get("seed"))
+    save_convergence_plot(dataset_name, info, SEED, gamma=opts.zero_weight)
 
     return {
         "dataset": dataset_name,
@@ -1142,10 +1156,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-import sys
 
 # --- CONFIGURATION ---
-CSV_FILE = Path(__file__).parent / "table_comparative_real_docs.csv"
+CSV_FILE = Path(__file__).parent / "../docs_full_comparison.csv"
+# Si tu utilises le nouveau CSV gÃ©nÃ©rÃ©: remplace par
+# CSV_FILE = Path(__file__).parent / "../docs_full_from_latex_in_sample_schema.csv"
+
 OUT_DIR = Path(__file__).parent / "plots" / "docs"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1154,13 +1170,29 @@ def plot_results():
         print(f"Erreur: Le fichier {CSV_FILE} n'existe pas.")
         return
 
-    # Chargement des donnÃ©es
     df = pd.read_csv(CSV_FILE)
-    
-    # Tri par taille de dataset (n) pour la lisibilitÃ©
-    df = df.sort_values('n')
-    
-    datasets = df['dataset'].str.replace('.mat', '', regex=False)
+
+    # -------------------------
+    # NETTOYAGE (IMPORTANT)
+    # -------------------------
+    # Enlever lignes sans dataset (ligne vide finale) + enlever "Averages" pour les plots dataset-par-dataset
+    df["dataset"] = df["dataset"].astype("string")
+    df = df[df["dataset"].notna() & (df["dataset"].str.strip() != "")]
+    df = df[df["dataset"].str.lower() != "averages"]
+
+    # Convertir colonnes numÃ©riques proprement (au cas oÃ¹ des champs vides existent)
+    num_cols = ["n","m","r","acc_L1","acc_Fro","acc_KL","time_L1","time_Fro","time_KL","it_L1","it_Fro","it_KL"]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Garder uniquement les lignes complÃ¨tes pour les plots
+    df = df.dropna(subset=["n","acc_L1","acc_Fro","acc_KL","time_L1","time_Fro","time_KL"])
+
+    # Tri par taille (n)
+    df = df.sort_values("n").reset_index(drop=True)
+
+    datasets = df["dataset"].str.replace(".mat", "", regex=False).tolist()
     x = np.arange(len(datasets))
     width = 0.25
 
@@ -1168,52 +1200,56 @@ def plot_results():
     # PLOT 1: ACCURACY COMPARISON
     # ==========================================
     plt.figure(figsize=(14, 7))
-    
-    # Barres
-    plt.bar(x - width, df['acc_L1'], width, label='L1-ONMF', color='#d62728', alpha=0.8)
-    plt.bar(x, df['acc_Fro'], width, label='Fro-ONMF', color='#1f77b4', alpha=0.8)
-    plt.bar(x + width, df['acc_KL'], width, label='KL-ONMF', color='#2ca02c', alpha=0.8)
-    
-    # EsthÃ©tique
-    plt.ylabel('Accuracy (%)', fontsize=12)
-    plt.title('Comparaison de la PrÃ©cision de Clustering sur Documents RÃ©els', fontsize=14)
-    plt.xticks(x, datasets, rotation=45, ha='right')
+
+    plt.bar(x - width, df["acc_L1"],  width, label="L1-ONMF", alpha=0.8)
+    plt.bar(x,         df["acc_Fro"], width, label="Fro-ONMF", alpha=0.8)
+    plt.bar(x + width, df["acc_KL"],  width, label="KL-ONMF", alpha=0.8)
+
+    plt.ylabel("Accuracy (%)", fontsize=12)
+    plt.title("Comparaison de la PrÃ©cision de Clustering sur Documents RÃ©els", fontsize=14)
+    plt.xticks(x, datasets, rotation=45, ha="right")
     plt.legend()
-    plt.grid(axis='y', linestyle='--', alpha=0.6)
+    plt.grid(axis="y", linestyle="--", alpha=0.6)
     plt.ylim(0, 100)
-    
-    # Annoter les victoires de L1 sur Fro
+
+    # Annoter seulement quand L1 bat Fro ET KL
     for i in range(len(df)):
-        if df['acc_L1'].iloc[i] > df['acc_Fro'].iloc[i]:
-            plt.text(x[i] - width, df['acc_L1'].iloc[i] + 1, "â˜…", 
-                     ha='center', color='red', fontsize=12, fontweight='bold')
+        l1  = df["acc_L1"].iloc[i]
+        fro = df["acc_Fro"].iloc[i]
+        kl  = df["acc_KL"].iloc[i]
+        if (l1 > fro) and (l1 > kl):
+            plt.text(x[i] - width, l1 + 1, "â˜…", ha="center", fontsize=12, fontweight="bold")
 
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "docs_accuracy_comparison.png", dpi=150)
-    print(f"Graphique sauvegardÃ© : {OUT_DIR / 'docs_accuracy_comparison.png'}")
+    out1 = OUT_DIR / "docs_accuracy_comparison.png"
+    plt.savefig(out1, dpi=150)
+    print(f"Graphique sauvegardÃ© : {out1}")
 
     # ==========================================
     # PLOT 2: TIME COMPARISON (Log Scale)
     # ==========================================
     plt.figure(figsize=(14, 6))
-    
-    plt.plot(datasets, df['time_L1'], 'o-', label='L1-ONMF', color='#d62728')
-    plt.plot(datasets, df['time_Fro'], 's-', label='Fro-ONMF', color='#1f77b4')
-    plt.plot(datasets, df['time_KL'], '^-', label='KL-ONMF', color='#2ca02c')
-    
-    plt.yscale('log') # Log scale car L1 est beaucoup plus lent
-    plt.ylabel('Time (seconds) - Log Scale', fontsize=12)
-    plt.title('Comparaison des Temps de Calcul', fontsize=14)
-    plt.xticks(rotation=45, ha='right')
+
+    # IMPORTANT: on utilise x (indices) => plus de problÃ¨me de catÃ©gories/NaN
+    plt.plot(x, df["time_L1"],  "o-", label="L1-ONMF")
+    plt.plot(x, df["time_Fro"], "s-", label="Fro-ONMF")
+    plt.plot(x, df["time_KL"],  "^-", label="KL-ONMF")
+
+    plt.yscale("log")
+    plt.ylabel("Time (seconds) - Log Scale", fontsize=12)
+    plt.title("Comparaison des Temps de Calcul", fontsize=14)
+    plt.xticks(x, datasets, rotation=45, ha="right")
     plt.grid(True, which="both", ls="-", alpha=0.5)
     plt.legend()
-    
+
     plt.tight_layout()
-    plt.savefig(OUT_DIR / "docs_time_comparison.png", dpi=150)
-    print(f"Graphique sauvegardÃ© : {OUT_DIR / 'docs_time_comparison.png'}")
+    out2 = OUT_DIR / "docs_time_comparison.png"
+    plt.savefig(out2, dpi=150)
+    print(f"Graphique sauvegardÃ© : {out2}")
 
 if __name__ == "__main__":
     plot_results()
+
 
 
 

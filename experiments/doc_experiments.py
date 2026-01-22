@@ -33,33 +33,41 @@ DATASETS = [
     "tr23.mat", "tr41.mat", "tr45.mat", "NG20.mat", "ng3sim.mat"
 ]
 
-def save_convergence_plot(dataset_name, info, seed):
-    """Affiche les deux courbes : Pure (réelle) et Weighted (optimisée)."""
-    errors_pure = info.get("rel_l1_errors")
-    errors_weighted = info.get("rel_l1_errors_weighted")
-    
-    if errors_pure is None or len(errors_pure) == 0: return
+
+
+def save_convergence_plot(dataset_name, info, seed, gamma):
+    pure = info.get("rel_l1_errors")
+    w = info.get("rel_l1_errors_weighted")
+
+    if pure is None or len(pure) == 0:
+        return
+
+    it_p = np.arange(1, len(pure) + 1)
 
     plt.figure(figsize=(10, 6))
-    
-    # 1. Courbe Pure (L'erreur mathématique stricte)
-    plt.plot(errors_pure, marker='o', markersize=3, label='L1 Pure (Real)', alpha=0.6)
-    
-    # 2. Courbe Weighted (Ce que l'algo optimise vraiment)
-    if errors_weighted is not None and len(errors_weighted) > 0:
-        plt.plot(errors_weighted, marker='x', markersize=3, label='L1 Weighted (Optimized)', linestyle='--')
+
+    # Si gamma==1, les deux devraient coïncider -> on affiche une seule courbe
+    if abs(gamma - 1.0) < 1e-12 or w is None or len(w) == 0:
+        plt.plot(it_p, pure, marker='o', markersize=3, label=f"Rel L1 error (γ=1)", alpha=0.7)
+    else:
+        it_w = np.arange(1, len(w) + 1)
+        plt.plot(it_w, w, marker='x', markersize=3, linestyle='--',
+                 label=f"Optimized objective (weighted, γ={gamma})")
+        plt.plot(it_p, pure, marker='o', markersize=3, alpha=0.5,
+                 label="Unweighted objective (γ=1) [diagnostic]")
 
     plt.title(f"Convergence: {dataset_name} (seed={seed})")
     plt.xlabel("Iterations")
-    plt.ylabel("Relative Error")
-    plt.grid(True, which='both', linestyle='--', alpha=0.7)
+    plt.ylabel("Relative objective value")
+    plt.grid(True, which='both', linestyle='--', alpha=0.6)
     plt.legend()
-    
-    # Sauvegarde
+    plt.tight_layout()
+
     out_dir = Path(__file__).parent / "plots"
     out_dir.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out_dir / f"{dataset_name}_conv.png", dpi=150)
+    plt.savefig(out_dir / f"{dataset_name}_conv_gamma{gamma}.png", dpi=150)
     plt.close()
+
 
 def run_one(path):
     dataset_name = Path(path).name
@@ -97,7 +105,7 @@ def run_one(path):
         r=r,
         maxiter=MAXITER,
         l1_tol=TOL, 
-        patience=20, # Patience élevée car l'inertie ralentit la convergence mais la rend stable
+        patience=20,
         seed=SEED,
         verbose=True,
         log_errors=True,
@@ -114,7 +122,7 @@ def run_one(path):
     acc = clustering_accuracy_hungarian(y, c_pred)
     
     print(f"  => ACC: {acc*100:.2f}% | Time: {t1-t0:.2f}s")
-    save_convergence_plot(dataset_name, info, info.get("seed"))
+    save_convergence_plot(dataset_name, info, SEED, gamma=opts.zero_weight)
 
     return {
         "dataset": dataset_name,
